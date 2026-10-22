@@ -131,12 +131,26 @@ async function connect() {
 }
 
 async function sendQuestion() {
-  if (!question.value.trim()) return
+  const content = question.value.trim()
+  if (!content) return
+  connectionError.value = ''
   try {
     if (polyvConnected.value) {
-      await sendPolyvQuestion(question.value.trim())
+      try {
+        await sendPolyvQuestion(content)
+      } catch (polyvError) {
+        // The player and live-status socket can be ready before POLYV's ask/chat
+        // core is available. Preserve the classroom flow by storing the question
+        // in QuestionPulse; a later POLYV sync can continue independently.
+        await submitQuestion(sessionId.value, participantId.value, content, crypto.randomUUID())
+        polyvConnected.value = false
+        polyvStatus.value = 'degraded'
+        polyvStatusDetail.value = polyvError instanceof Error
+          ? `POLYV 问答暂不可用，疑问已安全保存：${polyvError.message}`
+          : 'POLYV 问答暂不可用，疑问已安全保存'
+      }
     } else {
-      await submitQuestion(sessionId.value, participantId.value, question.value, crypto.randomUUID())
+      await submitQuestion(sessionId.value, participantId.value, content, crypto.randomUUID())
     }
     submitted.value = true
     question.value = ''
