@@ -32,6 +32,9 @@ if ($content -match '\bfetch\s*\(') {
 if ($content -notmatch 'pointerdown' -or $content -notmatch 'setPointerCapture') {
     throw 'Extension floating assistant must support bounded pointer dragging.'
 }
+if ($content -notmatch 'qp-disconnected' -or $content -notmatch 'fullscreenchange') {
+    throw 'Extension must expose disconnected state and recover inside fullscreen pages.'
+}
 $background = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $extensionRoot 'background.js')
 if ($background -notmatch 'chrome\.runtime\.onMessage' -or $background -notmatch '\bfetch\s*\(') {
     throw 'Extension background API bridge is missing.'

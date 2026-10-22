@@ -17,6 +17,8 @@
       * { box-sizing: border-box; }
       button, input { font: inherit; }
       .qp-orb { width: 58px; height: 58px; border: 1px solid #b99cff88; border-radius: 50%; color: white; cursor: grab; touch-action: none; background: radial-gradient(circle at 35% 30%, #cdb6ff 0 8%, #8657e8 28%, #2b1749 72%); box-shadow: 0 10px 35px #6d35d988, inset 0 0 18px #e1d4ff44; position: relative; display: grid; place-items: center; }
+      .qp-orb.qp-disconnected { filter: grayscale(1); opacity: .72; box-shadow: 0 8px 24px #0008; }
+      .qp-orb.qp-disconnected::after { animation: none; border-color: #a9a1af55; }
       .qp-orb::after { content: ''; width: 72px; height: 72px; position: absolute; border-radius: 50%; border: 1px solid #a77cff55; animation: qp-pulse 2.4s ease-out infinite; }
       .qp-orb span { font: 700 16px/1 system-ui, sans-serif; }
       .qp-count { position: absolute; right: -3px; top: -5px; min-width: 21px; height: 21px; padding: 0 5px; border-radius: 11px; background: #ff4d78; display: grid; place-items: center; font: 700 11px/1 system-ui, sans-serif; }
@@ -70,6 +72,11 @@
   let snapshot = null
   let checks = []
   let suppressOpen = false
+
+  function setConnectionState(connected) {
+    orb.classList.toggle('qp-disconnected', !connected)
+    orb.setAttribute('aria-label', connected ? '打开 QuestionPulse 教师助手' : 'QuestionPulse 已断开，点击重新连接')
+  }
 
   function keepInsideViewport() {
     const rect = host.getBoundingClientRect()
@@ -149,6 +156,7 @@
   }
 
   function renderSnapshot() {
+    setConnectionState(true)
     const clusters = snapshot?.clusters || []
     const openClusters = clusters.filter((item) => item.status !== 'closed')
     const priorityClusters = [...clusters].sort((a, b) => b.confusion_score - a.confusion_score)
@@ -188,6 +196,7 @@
   }
 
   function renderSetup(message = '') {
+    setConnectionState(false)
     body.innerHTML = `
       <section class="qp-card">
         <div class="qp-eyebrow">CONNECT CLASSROOM</div><strong>连接 QuestionPulse 课堂</strong>
@@ -261,6 +270,7 @@
   }
 
   function renderError(error) {
+    setConnectionState(false)
     const message = error instanceof Error ? error.message : '连接失败'
     body.innerHTML = `<section class="qp-card"><div class="qp-eyebrow">CONNECTION</div><strong>助手暂时无法连接</strong><p class="qp-error">${escapeHtml(message)}</p><div class="qp-actions"><button class="qp-button primary" id="qp-retry">重新连接</button><button class="qp-button" id="qp-reset">重新配置</button></div></section>`
     root.getElementById('qp-retry').addEventListener('click', refresh)
@@ -303,6 +313,11 @@
   enableDrag(orb)
   enableDrag(root.querySelector('.qp-header'))
   window.addEventListener('resize', keepInsideViewport)
+  document.addEventListener('fullscreenchange', () => {
+    const container = document.fullscreenElement || document.documentElement
+    container.appendChild(host)
+    keepInsideViewport()
+  })
   orb.addEventListener('click', () => {
     if (suppressOpen) {
       suppressOpen = false
