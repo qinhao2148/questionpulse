@@ -1,8 +1,8 @@
 # POLYV 接入与字段映射
 
-状态：2026-10-21 已完成真实 API、SDK 和端到端验收；2026-10-22 当前直播演示频道为 `8645366`。学生端已发送一条真实问题；服务端首轮同步 `fetched=1 / accepted=1`，第二轮同步 `fetched=1 / duplicates=1 / accepted=0`。课堂快照为 `live / connected`，问题带 `source=polyv_ask` 和官方 `external_id`。
+状态：已完成真实 API、SDK 和端到端验收；2026-10-23 当前直播演示频道为 `8655930`。学生端已发送真实问题“递归没有终止条件时，为什么会导致栈溢出？”；服务端同步后问题带 `source=polyv_ask` 和官方 `external_id=21611071`，课堂快照为 `live / connected`。该问题进入 DeepSeek 聚类，并完成教师流转、检测题审核发布、目标学生作答、重复作答拦截和报告统计。
 
-账号与场次核对：AppID/AppSecret 鉴权有效；频道为测试频道“测试1”。官方频道场次接口 `GET /live/v3/channel/session/data/list` 返回成功且最近 60 天 `totalItems=0`，真实提问记录的 `sessionId` 也为空。因此本次验收按频道绑定，未伪造或硬编码场次 ID；正式开播产生场次后可把返回的 `sessionId` 写入 `POLYV_SESSION_ID` 进行场次隔离。
+账号与场次核对：AppID/AppSecret 鉴权有效；当前频道为“QuestionPulse Live Demo”。当官方提问记录没有 `sessionId` 时，验收按频道绑定且不伪造场次 ID；取得正式场次 ID 后可写入 `POLYV_SESSION_ID` 进行场次隔离。
 
 ## 已实现的真实链路
 
@@ -11,7 +11,8 @@
 - 新版响应的 `id / viewerId / content / timestamp` 与传统提问响应的 `id / user.userId / content / time` 均映射到统一问题模型；只导入 `S_QUESTION`，按课堂、来源和官方 ID 去重。
 - 成功后课堂标记为 `live / connected`；鉴权或网络错误标记为 `not_configured / degraded`，本地课堂闭环仍可用。
 - 前端已安装 `@polyv/live-watch-sdk@2.20.0` 和 `@polyv/interactions-receive-sdk@0.24.0`。学生端按官方流程执行 `createWatchCore → setup → verifyNoneAuth → connect → setupPlayer → setupIarCore`，通过 `watchCore.ask.sendAskSpeak` 发送问题，并展示连接或降级状态；`services/polyvSdk.ts` 另保留 `updateConfig + QuestionAnswer` 的直接接入边界。
-- 真实 SDK 验收：观看授权、聊天室连接、播放器、互动模块和提问发送均已成功；当前演示频道为 `8645366`。内置浏览器学生端能够显示直播，Edge 兼容性仍按人工验收清单复核。
+- 真实 SDK 验收：观看授权、播放器、互动模块和提问发送均已成功；当前演示频道为 `8655930`。播放器已检测到正在开播，Edge 首帧、自动播放策略及结束后的播放器销毁仍按人工验收清单复核。
+- 聊天容错：播放器连接成功而 `chatCore` 暂未创建时，学生问题回退写入 QuestionPulse，页面明确显示集成降级；恢复后可再次走 POLYV 真实发送与服务端同步链路。
 
 本机已确认 AppID 和可用测试频道，但 AppSecret 只放在 `.env` 的 `POLYV_APP_SECRET`，不得复制到前端、文档、日志或提交包。
 
