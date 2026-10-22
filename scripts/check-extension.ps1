@@ -29,6 +29,9 @@ if ($content -notmatch 'chrome\.storage\.session') {
 if ($content -match '\bfetch\s*\(') {
     throw 'Content script must route API requests through the background service worker.'
 }
+if ($content -notmatch 'pointerdown' -or $content -notmatch 'setPointerCapture') {
+    throw 'Extension floating assistant must support bounded pointer dragging.'
+}
 $background = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $extensionRoot 'background.js')
 if ($background -notmatch 'chrome\.runtime\.onMessage' -or $background -notmatch '\bfetch\s*\(') {
     throw 'Extension background API bridge is missing.'

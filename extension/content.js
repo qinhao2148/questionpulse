@@ -16,13 +16,13 @@
       :host { all: initial; }
       * { box-sizing: border-box; }
       button, input { font: inherit; }
-      .qp-orb { width: 58px; height: 58px; border: 1px solid #b99cff88; border-radius: 50%; color: white; cursor: pointer; background: radial-gradient(circle at 35% 30%, #cdb6ff 0 8%, #8657e8 28%, #2b1749 72%); box-shadow: 0 10px 35px #6d35d988, inset 0 0 18px #e1d4ff44; position: relative; display: grid; place-items: center; }
+      .qp-orb { width: 58px; height: 58px; border: 1px solid #b99cff88; border-radius: 50%; color: white; cursor: grab; touch-action: none; background: radial-gradient(circle at 35% 30%, #cdb6ff 0 8%, #8657e8 28%, #2b1749 72%); box-shadow: 0 10px 35px #6d35d988, inset 0 0 18px #e1d4ff44; position: relative; display: grid; place-items: center; }
       .qp-orb::after { content: ''; width: 72px; height: 72px; position: absolute; border-radius: 50%; border: 1px solid #a77cff55; animation: qp-pulse 2.4s ease-out infinite; }
       .qp-orb span { font: 700 16px/1 system-ui, sans-serif; }
       .qp-count { position: absolute; right: -3px; top: -5px; min-width: 21px; height: 21px; padding: 0 5px; border-radius: 11px; background: #ff4d78; display: grid; place-items: center; font: 700 11px/1 system-ui, sans-serif; }
       .qp-panel { width: min(390px, calc(100vw - 32px)); max-height: min(690px, calc(100vh - 32px)); overflow: auto; border: 1px solid #ffffff1f; border-radius: 20px; color: #f7f2ff; background: linear-gradient(160deg, #181021 0%, #09070d 80%); box-shadow: 0 20px 70px #000a; font: 14px/1.45 Inter, system-ui, sans-serif; }
       .qp-hidden { display: none !important; }
-      .qp-header { position: sticky; top: 0; z-index: 2; padding: 18px 18px 14px; background: #130d1bdd; backdrop-filter: blur(14px); border-bottom: 1px solid #ffffff12; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+      .qp-header { position: sticky; top: 0; z-index: 2; padding: 18px 18px 14px; background: #130d1bdd; backdrop-filter: blur(14px); border-bottom: 1px solid #ffffff12; display: flex; justify-content: space-between; gap: 12px; align-items: center; cursor: grab; touch-action: none; }
       .qp-brand { display: flex; gap: 10px; align-items: center; }
       .qp-mini-orb { width: 30px; height: 30px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #d7c7ff, #7f4bd8 40%, #27143f 80%); box-shadow: 0 0 20px #8d5de977; }
       .qp-header strong, .qp-card strong { display: block; }
@@ -69,6 +69,47 @@
   let busy = false
   let snapshot = null
   let checks = []
+  let suppressOpen = false
+
+  function keepInsideViewport() {
+    const rect = host.getBoundingClientRect()
+    const left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, rect.left))
+    const top = Math.max(8, Math.min(window.innerHeight - rect.height - 8, rect.top))
+    host.style.right = 'auto'
+    host.style.bottom = 'auto'
+    host.style.left = `${left}px`
+    host.style.top = `${top}px`
+  }
+
+  function enableDrag(handle) {
+    let origin = null
+    handle.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || event.target.closest('#qp-close')) return
+      const rect = host.getBoundingClientRect()
+      origin = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false }
+      handle.setPointerCapture(event.pointerId)
+    })
+    handle.addEventListener('pointermove', (event) => {
+      if (!origin || !handle.hasPointerCapture(event.pointerId)) return
+      const dx = event.clientX - origin.x
+      const dy = event.clientY - origin.y
+      if (Math.abs(dx) + Math.abs(dy) > 5) origin.moved = true
+      const rect = host.getBoundingClientRect()
+      const left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, origin.left + dx))
+      const top = Math.max(8, Math.min(window.innerHeight - rect.height - 8, origin.top + dy))
+      host.style.right = 'auto'
+      host.style.bottom = 'auto'
+      host.style.left = `${left}px`
+      host.style.top = `${top}px`
+    })
+    handle.addEventListener('pointerup', (event) => {
+      if (!origin) return
+      suppressOpen = suppressOpen || origin.moved
+      origin = null
+      handle.releasePointerCapture(event.pointerId)
+    })
+    handle.addEventListener('pointercancel', () => { origin = null })
+  }
 
   const storageGet = (keys) => new Promise((resolve) => chrome.storage.session.get(keys, resolve))
   const storageSet = (value) => new Promise((resolve) => chrome.storage.session.set(value, resolve))
@@ -246,6 +287,7 @@
   function openPanel() {
     orb.classList.add('qp-hidden')
     panel.classList.remove('qp-hidden')
+    keepInsideViewport()
     refresh()
     clearInterval(timer)
     timer = setInterval(refresh, 3000)
@@ -254,10 +296,20 @@
   function closePanel() {
     panel.classList.add('qp-hidden')
     orb.classList.remove('qp-hidden')
+    keepInsideViewport()
     clearInterval(timer)
   }
 
-  orb.addEventListener('click', openPanel)
+  enableDrag(orb)
+  enableDrag(root.querySelector('.qp-header'))
+  window.addEventListener('resize', keepInsideViewport)
+  orb.addEventListener('click', () => {
+    if (suppressOpen) {
+      suppressOpen = false
+      return
+    }
+    openPanel()
+  })
   close.addEventListener('click', closePanel)
   refresh()
 })()
