@@ -105,11 +105,15 @@ async def require_active_session(db: AsyncSession, session_id: str) -> Classroom
 
 
 def require_teacher(classroom: ClassroomSession, authorization: str | None) -> None:
-    verify_access_token(classroom.teacher_token_hash, authorization)
+    verify_access_token(
+        classroom.teacher_token_hash, authorization, classroom.teacher_token_expires_at
+    )
 
 
 def require_student(participant: Participant, authorization: str | None) -> None:
-    verify_access_token(participant.access_token_hash, authorization)
+    verify_access_token(
+        participant.access_token_hash, authorization, participant.access_token_expires_at
+    )
 
 
 async def feedback_summary(
@@ -351,6 +355,8 @@ async def create_session(payload: SessionCreate, db: Database) -> dict:
         title=payload.title,
         status="live",
         teacher_token_hash=token_digest(teacher_token),
+        teacher_token_expires_at=datetime.now(UTC)
+        + timedelta(hours=settings.access_token_ttl_hours),
         join_code=issue_join_code(),
         polyv_channel_id=settings.polyv_channel_id or None,
         polyv_session_id=settings.polyv_session_id or None,
@@ -389,6 +395,9 @@ async def join_session(session_id: str, payload: JoinRequest, db: Database) -> d
     )
     student_token = issue_access_token("qps")
     participant.access_token_hash = token_digest(student_token)
+    participant.access_token_expires_at = datetime.now(UTC) + timedelta(
+        hours=get_settings().access_token_ttl_hours
+    )
     if existing is None:
         db.add(participant)
     await db.commit()

@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import secrets
+from datetime import UTC, datetime
 
 from fastapi import HTTPException
 
@@ -27,11 +28,21 @@ def bearer_token(authorization: str | None) -> str | None:
     return token
 
 
-def verify_access_token(expected_digest: str | None, authorization: str | None) -> None:
+def verify_access_token(
+    expected_digest: str | None,
+    authorization: str | None,
+    expires_at: datetime | None = None,
+) -> None:
     # Sessions created before the role-boundary migration remain readable so
     # existing demo evidence is preserved. Every newly created session has a digest.
     if expected_digest is None:
         return
+    if expires_at is not None:
+        comparable_expiry = (
+            expires_at.replace(tzinfo=UTC) if expires_at.tzinfo is None else expires_at
+        )
+        if comparable_expiry <= datetime.now(UTC):
+            raise HTTPException(status_code=403, detail="access_expired")
     supplied = bearer_token(authorization)
     if supplied is None or not hmac.compare_digest(expected_digest, token_digest(supplied)):
         raise HTTPException(status_code=403, detail="access_denied")

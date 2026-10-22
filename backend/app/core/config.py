@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek-flash"
     llm_timeout_seconds: float = 15.0
     llm_max_output_tokens: int = 1200
+    access_token_ttl_hours: int = 72
 
     @field_validator("cors_origins", mode="before")
     @classmethod

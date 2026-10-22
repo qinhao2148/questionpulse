@@ -16,6 +16,7 @@ class ClassroomSession(Base):
     mode: Mapped[str] = mapped_column(String(20), default="demo")
     integration_status: Mapped[str] = mapped_column(String(32), default="not_configured")
     teacher_token_hash: Mapped[str | None] = mapped_column(String(64))
+    teacher_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     join_code: Mapped[str | None] = mapped_column(String(12), unique=True, index=True)
     polyv_channel_id: Mapped[str | None] = mapped_column(String(64), index=True)
     polyv_session_id: Mapped[str | None] = mapped_column(String(100), index=True)

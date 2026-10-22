@@ -30,6 +30,7 @@ class Participant(Base):
     viewer_key: Mapped[str] = mapped_column(String(100))
     display_name: Mapped[str | None] = mapped_column(String(100))
     access_token_hash: Mapped[str | None] = mapped_column(String(64))
+    access_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
