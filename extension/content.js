@@ -130,8 +130,26 @@
     handle.addEventListener('pointercancel', () => { origin = null })
   }
 
-  const storageGet = (keys) => new Promise((resolve) => chrome.storage.session.get(keys, resolve))
-  const storageSet = (value) => new Promise((resolve) => chrome.storage.session.set(value, resolve))
+  const storageGet = (keys) => new Promise((resolve, reject) => {
+    try {
+      chrome.storage.session.get(keys, (value) => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message))
+        else resolve(value)
+      })
+    } catch (error) {
+      reject(error)
+    }
+  })
+  const storageSet = (value) => new Promise((resolve, reject) => {
+    try {
+      chrome.storage.session.set(value, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message))
+        else resolve()
+      })
+    } catch (error) {
+      reject(error)
+    }
+  })
   const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character])
 
   async function config() {
@@ -230,12 +248,16 @@
   async function saveSetup(event) {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
-    await storageSet({
-      apiBaseUrl: String(data.get('apiBaseUrl')).replace(/\/$/, ''),
-      sessionId: String(data.get('sessionId')).trim(),
-      teacherToken: String(data.get('teacherToken')).trim(),
-    })
-    await refresh()
+    try {
+      await storageSet({
+        apiBaseUrl: String(data.get('apiBaseUrl')).replace(/\/$/, ''),
+        sessionId: String(data.get('sessionId')).trim(),
+        teacherToken: String(data.get('teacherToken')).trim(),
+      })
+      await refresh()
+    } catch (error) {
+      renderError(error)
+    }
   }
 
   async function changeStatus(event) {
@@ -287,20 +309,24 @@
   function renderError(error) {
     stopPolling()
     setConnectionState(false)
-    const message = error instanceof Error ? error.message : '连接失败'
+    const rawMessage = error instanceof Error ? error.message : '连接失败'
+    const contextInvalidated = /extension context invalidated/i.test(rawMessage)
+    const message = contextInvalidated
+      ? '扩展已重新加载，请刷新当前 POLYV 开播页面。'
+      : rawMessage
     body.innerHTML = `<section class="qp-card"><div class="qp-eyebrow">CONNECTION</div><strong>助手暂时无法连接</strong><p class="qp-error">${escapeHtml(message)}</p><div class="qp-actions"><button class="qp-button primary" id="qp-retry">重新连接</button><button class="qp-button" id="qp-reset">重新配置</button></div></section>`
     root.getElementById('qp-retry').addEventListener('click', refresh)
     root.getElementById('qp-reset').addEventListener('click', () => renderSetup(message))
   }
 
   async function refresh() {
-    const settings = await config()
-    if (!settings.sessionId || !settings.teacherToken) {
-      stopPolling()
-      if (!root.getElementById('qp-form')) renderSetup()
-      return
-    }
     try {
+      const settings = await config()
+      if (!settings.sessionId || !settings.teacherToken) {
+        stopPolling()
+        if (!root.getElementById('qp-form')) renderSetup()
+        return
+      }
       ;[snapshot, checks] = await Promise.all([
         api(`/sessions/${settings.sessionId}/teacher-snapshot`),
         api(`/sessions/${settings.sessionId}/checks`),

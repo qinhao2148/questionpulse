@@ -44,6 +44,9 @@ if ($content -notmatch 'ai_normalized_intent' -or $content -notmatch 'ai_semanti
 if ($content -notmatch 'function stopPolling' -or $content -notmatch "if \(!root\.getElementById\('qp-form'\)\) renderSetup\(\)") {
     throw 'Extension setup form must remain stable while credentials are entered.'
 }
+if ($content -notmatch 'extension context invalidated' -or $content -notmatch 'chrome\.runtime\.lastError') {
+    throw 'Extension must handle a stale content-script context after reload.'
+}
 $background = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $extensionRoot 'background.js')
 if ($background -notmatch 'chrome\.runtime\.onMessage' -or $background -notmatch '\bfetch\s*\(') {
     throw 'Extension background API bridge is missing.'
