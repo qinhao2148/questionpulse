@@ -94,24 +94,35 @@ class PolyvQuestionAdapter:
             raise PolyvNotConfiguredError("POLYV credentials are not configured")
         owns_client = self.client is None
         client = self.client or httpx.AsyncClient(timeout=self.timeout)
+        qa_body: dict[str, Any] = {}
+        ask_body: dict[str, Any] = {}
+        failures = []
         try:
-            qa_body = await self._signed_get(
-                client,
-                self.qa_endpoint,
-                {
-                    "channelId": channel_id,
-                    "pageNumber": page_number,
-                    "pageSize": page_size,
-                },
-            )
-            ask_body = await self._signed_get(
-                client,
-                self.legacy_ask_endpoint.format(channel_id=channel_id),
-                {"begin": 0, "end": -1},
-            )
+            try:
+                qa_body = await self._signed_get(
+                    client,
+                    self.qa_endpoint,
+                    {
+                        "channelId": channel_id,
+                        "pageNumber": page_number,
+                        "pageSize": page_size,
+                    },
+                )
+            except PolyvApiError as exc:
+                failures.append(f"qa={exc}")
+            try:
+                ask_body = await self._signed_get(
+                    client,
+                    self.legacy_ask_endpoint.format(channel_id=channel_id),
+                    {"begin": 0, "end": -1},
+                )
+            except PolyvApiError as exc:
+                failures.append(f"legacy={exc}")
         finally:
             if owns_client:
                 await client.aclose()
+        if not qa_body and not ask_body:
+            raise PolyvApiError("POLYV question sources unavailable: " + "; ".join(failures))
 
         qa_contents = (qa_body.get("data") or {}).get("contents") or []
         ask_data = ask_body.get("data") or []

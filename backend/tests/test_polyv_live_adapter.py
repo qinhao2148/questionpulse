@@ -136,3 +136,31 @@ async def test_fetch_questions_reports_only_safe_http_status() -> None:
         with pytest.raises(PolyvApiError, match="POLYV HTTP status: 503") as error:
             await adapter.fetch_questions("4146015")
     assert "internal details" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_fetch_questions_uses_legacy_source_when_qa_is_unavailable() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/list-qa"):
+            return httpx.Response(400, json={"code": 400, "status": "error"})
+        return httpx.Response(
+            200,
+            json={
+                "code": 200,
+                "status": "success",
+                "data": [
+                    {
+                        "id": "ask-fallback",
+                        "event": "S_QUESTION",
+                        "content": "降级数据源仍然可用",
+                        "user": {"userId": "viewer-fallback"},
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        questions = await PolyvQuestionAdapter("app", "secret", client=client).fetch_questions(
+            "4146015"
+        )
+    assert [item.external_id for item in questions] == ["ask-fallback"]
