@@ -19,6 +19,10 @@ export function getJoinCode(sessionId: string) {
   return sessionStorage.getItem(joinCodeKey(sessionId)) || ''
 }
 
+export function getTeacherToken(sessionId: string) {
+  return sessionStorage.getItem(teacherTokenKey(sessionId)) || ''
+}
+
 function bearer(token: string | null): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }

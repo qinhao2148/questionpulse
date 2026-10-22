@@ -7,6 +7,9 @@ if ($manifest.manifest_version -ne 3) { throw 'Extension must use Manifest V3.' 
 if (-not $manifest.content_scripts -or -not $manifest.content_scripts[0].js) {
     throw 'Extension content script is missing.'
 }
+if (-not ($manifest.content_scripts | Where-Object { $_.js -contains 'pairing.js' })) {
+    throw 'Teacher-page pairing content script is missing.'
+}
 if ($manifest.background.service_worker -ne 'background.js') {
     throw 'Extension session-storage service worker is missing.'
 }
@@ -44,6 +47,13 @@ if ($background -notmatch 'chrome\.runtime\.onMessage' -or $background -notmatch
 }
 if ($background -notmatch 'isAllowedRequest' -or $background -notmatch 'saved\.sessionId') {
     throw 'Extension API bridge must enforce a route and bound-classroom allowlist.'
+}
+$pairing = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $extensionRoot 'pairing.js')
+if ($pairing -notmatch 'chrome\.storage\.session' -or $pairing -match 'chrome\.storage\.local') {
+    throw 'Teacher-page pairing must use non-persistent session storage.'
+}
+if ($pairing -notmatch 'ALLOWED_ORIGINS' -or $pairing -notmatch 'ALLOWED_API_BASES' -or $pairing -notmatch 'UUID_PATTERN') {
+    throw 'Teacher-page pairing must validate origin, API base, and identifiers.'
 }
 
 Write-Host 'Extension checks passed.' -ForegroundColor Green

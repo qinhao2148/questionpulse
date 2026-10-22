@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import {
@@ -12,6 +12,7 @@ import {
   fetchTeacherChecks,
   generateCheck,
   getJoinCode,
+  getTeacherToken,
   saveTeacherAccess,
   retryQuestion,
   retryPendingQuestions,
@@ -34,6 +35,9 @@ const error = ref('')
 const integrationMessage = ref('')
 const ending = ref(false)
 const creatingNext = ref(false)
+const copilotState = ref<'idle' | 'waiting' | 'connected' | 'unavailable'>('idle')
+let copilotRequestId = ''
+let copilotTimer: ReturnType<typeof window.setTimeout> | undefined
 const clusters = computed(() => snapshot.value?.clusters ?? [])
 const selected = computed(() => clusters.value.find((item) => item.id === selectedId.value))
 const selectedCheck = computed(() => checks.value.find((item) => item.cluster_id === selectedId.value))
@@ -42,6 +46,48 @@ const participantTotal = computed(() => new Set(
 ).size)
 const joinCode = computed(() => getJoinCode(String(route.params.sessionId)))
 const studentJoinUrl = computed(() => `${window.location.origin}/student/${route.params.sessionId}?code=${encodeURIComponent(joinCode.value)}`)
+
+function handleCopilotPairing(event: MessageEvent) {
+  const message = event.data
+  if (event.source !== window || event.origin !== window.location.origin
+    || message?.source !== 'questionpulse-copilot-extension'
+    || message?.type !== 'QUESTIONPULSE_BIND_RESULT'
+    || message?.requestId !== copilotRequestId) return
+  if (copilotTimer) window.clearTimeout(copilotTimer)
+  copilotState.value = message.ok ? 'connected' : 'unavailable'
+  integrationMessage.value = message.ok
+    ? '开播助手已绑定本课堂；返回或刷新保利威开播页即可显示已连接。'
+    : '扩展未能完成绑定，请确认扩展已启用并重新加载。'
+}
+
+function connectCopilot() {
+  const sessionId = String(route.params.sessionId)
+  const teacherToken = getTeacherToken(sessionId)
+  if (!teacherToken) {
+    error.value = '当前页面没有教师访问令牌，请使用教师专属入口重新打开。'
+    return
+  }
+  copilotState.value = 'waiting'
+  copilotRequestId = crypto.randomUUID()
+  const backendHost = window.location.hostname === 'localhost' ? 'localhost' : '127.0.0.1'
+  window.postMessage({
+    source: 'questionpulse-teacher-app',
+    type: 'QUESTIONPULSE_BIND_COPILOT',
+    requestId: copilotRequestId,
+    payload: {
+      apiBaseUrl: `http://${backendHost}:8000/api/v1`,
+      sessionId,
+      teacherToken,
+    },
+  }, window.location.origin)
+  if (copilotTimer) window.clearTimeout(copilotTimer)
+  copilotTimer = window.setTimeout(() => {
+    if (copilotState.value === 'waiting') {
+      copilotState.value = 'unavailable'
+      integrationMessage.value = '没有检测到开播助手，请在 Edge 扩展页启用或重新加载扩展。'
+    }
+  }, 1800)
+}
 
 async function refresh() {
   try {
@@ -237,7 +283,14 @@ async function finishCheck() {
   }
 }
 
-onMounted(bootstrapTeacherAccess)
+onMounted(() => {
+  window.addEventListener('message', handleCopilotPairing)
+  bootstrapTeacherAccess()
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('message', handleCopilotPairing)
+  if (copilotTimer) window.clearTimeout(copilotTimer)
+})
 </script>
 
 <template>
@@ -253,7 +306,10 @@ onMounted(bootstrapTeacherAccess)
 
     <section v-if="snapshot?.status !== 'ended' && joinCode" class="surface classroom-access-panel">
       <div><p class="eyebrow">STUDENT ACCESS</p><strong>学生课堂码 {{ joinCode }}</strong><small>分享学生链接即可加入；学生端不会显示教师控制与完整报告入口。</small></div>
-      <a :href="studentJoinUrl" target="_blank" rel="noreferrer">打开学生入口</a>
+      <div class="classroom-access-actions">
+        <a :href="studentJoinUrl" target="_blank" rel="noreferrer">打开学生入口</a>
+        <button type="button" :disabled="copilotState === 'waiting'" @click="connectCopilot">{{ copilotState === 'waiting' ? '正在连接…' : copilotState === 'connected' ? '开播助手已连接' : '连接开播助手' }}</button>
+      </div>
     </section>
 
     <section class="surface reliability-panel" :class="{ degraded: snapshot?.integration_status === 'degraded' }">
