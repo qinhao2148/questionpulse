@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "QuestionPulse Teacher Copilot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "在 POLYV 网页开播台内查看并处理实时群体疑问。",
   "permissions": ["storage"],
   "host_permissions": [

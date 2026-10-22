@@ -75,6 +75,16 @@
   let checks = []
   let suppressOpen = false
 
+  function stopPolling() {
+    clearInterval(timer)
+    timer = undefined
+  }
+
+  function startPolling() {
+    stopPolling()
+    if (!panel.classList.contains('qp-hidden')) timer = setInterval(refresh, 3000)
+  }
+
   function setConnectionState(connected) {
     orb.classList.toggle('qp-disconnected', !connected)
     orb.setAttribute('aria-label', connected ? '打开 QuestionPulse 教师助手' : 'QuestionPulse 已断开，点击重新连接')
@@ -200,6 +210,7 @@
   }
 
   function renderSetup(message = '') {
+    stopPolling()
     setConnectionState(false)
     body.innerHTML = `
       <section class="qp-card">
@@ -274,6 +285,7 @@
   }
 
   function renderError(error) {
+    stopPolling()
     setConnectionState(false)
     const message = error instanceof Error ? error.message : '连接失败'
     body.innerHTML = `<section class="qp-card"><div class="qp-eyebrow">CONNECTION</div><strong>助手暂时无法连接</strong><p class="qp-error">${escapeHtml(message)}</p><div class="qp-actions"><button class="qp-button primary" id="qp-retry">重新连接</button><button class="qp-button" id="qp-reset">重新配置</button></div></section>`
@@ -284,7 +296,8 @@
   async function refresh() {
     const settings = await config()
     if (!settings.sessionId || !settings.teacherToken) {
-      renderSetup()
+      stopPolling()
+      if (!root.getElementById('qp-form')) renderSetup()
       return
     }
     try {
@@ -293,6 +306,7 @@
         api(`/sessions/${settings.sessionId}/checks`),
       ])
       renderSnapshot()
+      startPolling()
     } catch (error) {
       renderError(error)
     }
@@ -302,16 +316,15 @@
     orb.classList.add('qp-hidden')
     panel.classList.remove('qp-hidden')
     keepInsideViewport()
+    stopPolling()
     refresh()
-    clearInterval(timer)
-    timer = setInterval(refresh, 3000)
   }
 
   function closePanel() {
     panel.classList.add('qp-hidden')
     orb.classList.remove('qp-hidden')
     keepInsideViewport()
-    clearInterval(timer)
+    stopPolling()
   }
 
   enableDrag(orb)

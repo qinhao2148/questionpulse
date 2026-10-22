@@ -41,6 +41,9 @@ if ($content -notmatch 'qp-disconnected' -or $content -notmatch 'fullscreenchang
 if ($content -notmatch 'ai_normalized_intent' -or $content -notmatch 'ai_semantic_reason') {
     throw 'Extension must display auditable teacher-only AI semantic hints.'
 }
+if ($content -notmatch 'function stopPolling' -or $content -notmatch "if \(!root\.getElementById\('qp-form'\)\) renderSetup\(\)") {
+    throw 'Extension setup form must remain stable while credentials are entered.'
+}
 $background = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $extensionRoot 'background.js')
 if ($background -notmatch 'chrome\.runtime\.onMessage' -or $background -notmatch '\bfetch\s*\(') {
     throw 'Extension background API bridge is missing.'
