@@ -3,7 +3,7 @@ import json
 import math
 import time
 from collections import Counter
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -182,6 +182,18 @@ async def store_external_question(
     await db.flush()
     await assign_question(db, question)
     return question, "accepted"
+
+
+def is_current_classroom_event(event: NormalizedQuestion, created_at: datetime) -> bool:
+    """Exclude question history from earlier broadcasts on a reused POLYV channel."""
+    classroom_start = created_at
+    if classroom_start.tzinfo is None:
+        classroom_start = classroom_start.replace(tzinfo=timezone(timedelta(hours=8)))
+    event_time = event.occurred_at
+    if event_time.tzinfo is None:
+        event_time = event_time.replace(tzinfo=UTC)
+    # Allow a small clock skew while still excluding earlier broadcast history.
+    return event_time.astimezone(UTC) >= classroom_start.astimezone(UTC) - timedelta(minutes=2)
 
 
 def require_teacher(classroom: ClassroomSession, authorization: str | None) -> None:
@@ -800,6 +812,27 @@ async def sync_polyv_questions(
         await db.commit()
         raise HTTPException(status_code=502, detail="polyv_api_unavailable") from exc
 
+    fetched = len(events)
+    seen_on_channel = set(
+        (
+            await db.execute(
+                select(Question.source, Question.external_id)
+                .join(ClassroomSession, ClassroomSession.id == Question.session_id)
+                .where(
+                    ClassroomSession.polyv_channel_id == channel_id,
+                    Question.session_id != session_id,
+                    Question.external_id.is_not(None),
+                )
+            )
+        ).all()
+    )
+    events = [
+        event
+        for event in events
+        if is_current_classroom_event(event, classroom.created_at)
+        and (event.source, event.external_id) not in seen_on_channel
+    ]
+    skipped_history = fetched - len(events)
     accepted = duplicates = pending = reconciled = 0
     for event in events:
         question, outcome = await store_external_question(db, session_id, event)
@@ -825,7 +858,9 @@ async def sync_polyv_questions(
             "reconciled": reconciled,
             "duplicates": duplicates,
             "pending": pending,
-            "fetched": len(events),
+            "fetched": fetched,
+            "eligible": len(events),
+            "skipped_history": skipped_history,
             "channel_id": channel_id,
             "polyv_session_id": classroom.polyv_session_id,
             "integration_status": "connected",

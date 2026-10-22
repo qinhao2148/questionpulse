@@ -8,9 +8,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.api.routes import classroom as classroom_routes
-from app.api.routes.classroom import confusion_signal
+from app.api.routes.classroom import confusion_signal, is_current_classroom_event
 from app.db.base import Base
 from app.db.session import get_db
+from app.integrations.base import NormalizedQuestion
 from app.main import app
 from app.models.classroom import Participant
 from app.schemas.classroom import FeedbackSummary
@@ -109,6 +110,26 @@ def test_confusion_signal_exposes_factual_components_and_check_errors() -> None:
     assert low.check_error_ratio == 0
     assert high.check_error_ratio == 1
     assert high.participant_ratio == 0.2
+
+
+def test_polyv_live_sync_excludes_history_from_earlier_broadcasts() -> None:
+    classroom_created = datetime(2026, 10, 23, 3, 10)
+    old = NormalizedQuestion(
+        source="polyv_ask",
+        external_id="old",
+        viewer_key="viewer",
+        content="上一场的问题",
+        occurred_at=datetime(2026, 10, 22, 19, 0, tzinfo=UTC),
+    )
+    current = NormalizedQuestion(
+        source="polyv_ask",
+        external_id="current",
+        viewer_key="viewer",
+        content="本场的问题",
+        occurred_at=datetime(2026, 10, 22, 19, 9, tzinfo=UTC),
+    )
+    assert not is_current_classroom_event(old, classroom_created)
+    assert is_current_classroom_event(current, classroom_created)
 
 
 def test_local_question_pipeline_is_idempotent_and_clustered() -> None:
@@ -439,6 +460,49 @@ def test_polyv_contract_fixture_maps_and_deduplicates_without_live_call() -> Non
         json={"environment": "contract_test", "action": "recover"},
     )
     assert recovered.json()["data"]["integration_status"] == "contract_verified"
+    app.dependency_overrides.clear()
+
+
+def test_live_sync_skips_external_ids_seen_on_same_channel(monkeypatch) -> None:
+    asyncio.run(reset_database())
+    app.dependency_overrides[get_db] = override_db
+    client = RoleAwareTestClient(app)
+    first = client.post("/api/v1/sessions", json={"title": "上一场"}).json()["data"]
+    client.post(
+        f"/api/v1/sessions/{first['id']}/integrations/polyv/events",
+        json={
+            "environment": "contract_test",
+            "channel_id": "reused-channel",
+            "polyv_session_id": "first",
+            "events": [{
+                "external_id": "already-seen",
+                "viewer_key": "viewer",
+                "content": "上一场问题",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "source": "polyv_qa",
+            }],
+        },
+    )
+    second = client.post("/api/v1/sessions", json={"title": "下一场"}).json()["data"]
+
+    async def repeated_history(*_args, **_kwargs):
+        return [NormalizedQuestion(
+            source="polyv_qa",
+            external_id="already-seen",
+            viewer_key="viewer",
+            content="上一场问题",
+            occurred_at=datetime.now(UTC),
+        )]
+
+    monkeypatch.setattr(classroom_routes.PolyvQuestionAdapter, "fetch_questions", repeated_history)
+    synced = client.post(
+        f"/api/v1/sessions/{second['id']}/integrations/polyv/sync",
+        json={"channel_id": "reused-channel"},
+    )
+    assert synced.status_code == 200
+    assert synced.json()["data"]["accepted"] == 0
+    assert synced.json()["data"]["skipped_history"] == 1
+    assert client.get(f"/api/v1/sessions/{second['id']}/teacher-snapshot").json()["clusters"] == []
     app.dependency_overrides.clear()
 
 
