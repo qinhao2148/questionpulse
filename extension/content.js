@@ -159,6 +159,7 @@
 
   function renderSnapshot() {
     setConnectionState(true)
+    if (snapshot?.status === 'ended') clearInterval(timer)
     const clusters = snapshot?.clusters || []
     const openClusters = clusters.filter((item) => item.status !== 'closed')
     const priorityClusters = [...clusters].sort((a, b) => b.confusion_score - a.confusion_score)

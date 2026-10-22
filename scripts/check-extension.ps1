@@ -42,5 +42,8 @@ $background = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $extension
 if ($background -notmatch 'chrome\.runtime\.onMessage' -or $background -notmatch '\bfetch\s*\(') {
     throw 'Extension background API bridge is missing.'
 }
+if ($background -notmatch 'isAllowedRequest' -or $background -notmatch 'saved\.sessionId') {
+    throw 'Extension API bridge must enforce a route and bound-classroom allowlist.'
+}
 
 Write-Host 'Extension checks passed.' -ForegroundColor Green

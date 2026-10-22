@@ -19,17 +19,31 @@ const ALLOWED_API_BASES = new Set([
   'http://localhost:8000/api/v1',
 ])
 
+function isAllowedRequest(path, method, sessionId) {
+  const escapedSessionId = String(sessionId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const routes = [
+    ['GET', new RegExp(`^/sessions/${escapedSessionId}/teacher-snapshot$`)],
+    ['GET', new RegExp(`^/sessions/${escapedSessionId}/checks$`)],
+    ['PATCH', new RegExp(`^/sessions/${escapedSessionId}/clusters/[0-9a-f-]+/status$`, 'i')],
+    ['POST', new RegExp(`^/sessions/${escapedSessionId}/clusters/[0-9a-f-]+/checks/generate$`, 'i')],
+    ['POST', new RegExp(`^/sessions/${escapedSessionId}/checks/[0-9a-f-]+/approve$`, 'i')],
+    ['POST', new RegExp(`^/sessions/${escapedSessionId}/checks/[0-9a-f-]+/close$`, 'i')],
+  ]
+  return routes.some(([allowedMethod, pattern]) => allowedMethod === method && pattern.test(path))
+}
+
 async function callQuestionPulse(path, init = {}) {
   const saved = await chrome.storage.session.get(['apiBaseUrl', 'sessionId', 'teacherToken'])
   const apiBaseUrl = String(saved.apiBaseUrl || 'http://127.0.0.1:8000/api/v1').replace(/\/$/, '')
   if (!ALLOWED_API_BASES.has(apiBaseUrl)) {
     throw new Error('api_base_not_allowed')
   }
-  if (!String(path).startsWith('/sessions/')) {
+  const method = String(init.method || 'GET').toUpperCase()
+  if (!saved.sessionId || !isAllowedRequest(String(path), method, saved.sessionId)) {
     throw new Error('api_path_not_allowed')
   }
   const response = await fetch(`${apiBaseUrl}${path}`, {
-    method: init.method || 'GET',
+    method,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${saved.teacherToken || ''}`,
