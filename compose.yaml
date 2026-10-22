@@ -1,0 +1,30 @@
+name: questionpulse
+
+services:
+  mysql:
+    image: mysql:8.0.41
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-questionpulse}
+      MYSQL_USER: ${MYSQL_USER:-questionpulse}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-questionpulse_dev}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-questionpulse_root_dev}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+08:00
+    ports:
+      - "3307:3306"
+    volumes:
+      - questionpulse_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  questionpulse_mysql:
+

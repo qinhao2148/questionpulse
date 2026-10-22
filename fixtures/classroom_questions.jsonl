@@ -1,0 +1,76 @@
+{"id":"q001","text":"递归为什么一定要有结束条件？","participant_id":"s01","expected_cluster":"recursion_exit","split":"train","is_question":true}
+{"id":"q002","text":"如果递归没有出口会发生什么？","participant_id":"s02","expected_cluster":"recursion_exit","split":"train","is_question":true}
+{"id":"q003","text":"递归函数什么时候停止调用自己？","participant_id":"s03","expected_cluster":"recursion_exit","split":"train","is_question":true}
+{"id":"q004","text":"终止条件写错会不会一直递归？","participant_id":"s04","expected_cluster":"recursion_exit","split":"train","is_question":true}
+{"id":"q005","text":"递归基线条件应该放在哪里？","participant_id":"s05","expected_cluster":"recursion_exit","split":"eval","is_question":true}
+{"id":"q006","text":"没有base case程序是不是停不下来？","participant_id":"s06","expected_cluster":"recursion_exit","split":"eval","is_question":true}
+{"id":"q007","text":"递归为什么会导致栈溢出？","participant_id":"s07","expected_cluster":"recursion_stack","split":"train","is_question":true}
+{"id":"q008","text":"调用层数太多为什么会爆栈？","participant_id":"s08","expected_cluster":"recursion_stack","split":"train","is_question":true}
+{"id":"q009","text":"每次递归都会占一层调用栈吗？","participant_id":"s09","expected_cluster":"recursion_stack","split":"train","is_question":true}
+{"id":"q010","text":"递归深度很大时内存会怎样？","participant_id":"s10","expected_cluster":"recursion_stack","split":"train","is_question":true}
+{"id":"q011","text":"为什么递归太深会报maximum recursion depth？","participant_id":"s11","expected_cluster":"recursion_stack","split":"eval","is_question":true}
+{"id":"q012","text":"尾递归也会占用很多栈空间吗？","participant_id":"s12","expected_cluster":"recursion_stack","split":"eval","is_question":true}
+{"id":"q013","text":"闭包到底是什么？","participant_id":"s01","expected_cluster":"closure_concept","split":"train","is_question":true}
+{"id":"q014","text":"为什么内部函数能记住外部变量？","participant_id":"s13","expected_cluster":"closure_concept","split":"train","is_question":true}
+{"id":"q015","text":"闭包保存变量的原理是什么？","participant_id":"s14","expected_cluster":"closure_concept","split":"train","is_question":true}
+{"id":"q016","text":"函数返回后局部变量为什么还存在？","participant_id":"s15","expected_cluster":"closure_concept","split":"train","is_question":true}
+{"id":"q017","text":"怎么判断一个函数是不是闭包？","participant_id":"s16","expected_cluster":"closure_concept","split":"eval","is_question":true}
+{"id":"q018","text":"闭包和普通函数的区别在哪里？","participant_id":"s17","expected_cluster":"closure_concept","split":"eval","is_question":true}
+{"id":"q019","text":"闭包为什么可能造成内存泄漏？","participant_id":"s18","expected_cluster":"closure_leak","split":"train","is_question":true}
+{"id":"q020","text":"使用闭包后变量一直释放不了怎么办？","participant_id":"s19","expected_cluster":"closure_leak","split":"train","is_question":true}
+{"id":"q021","text":"闭包引用对象会阻止垃圾回收吗？","participant_id":"s20","expected_cluster":"closure_leak","split":"train","is_question":true}
+{"id":"q022","text":"怎样避免闭包占用太多内存？","participant_id":"s21","expected_cluster":"closure_leak","split":"train","is_question":true}
+{"id":"q023","text":"事件监听里的闭包要手动清理吗？","participant_id":"s22","expected_cluster":"closure_leak","split":"eval","is_question":true}
+{"id":"q024","text":"解除外部引用就能回收闭包吗？","participant_id":"s23","expected_cluster":"closure_leak","split":"eval","is_question":true}
+{"id":"q025","text":"async函数里的代码按什么顺序执行？","participant_id":"s02","expected_cluster":"async_order","split":"train","is_question":true}
+{"id":"q026","text":"await后面的语句什么时候继续？","participant_id":"s24","expected_cluster":"async_order","split":"train","is_question":true}
+{"id":"q027","text":"微任务和普通同步代码谁先执行？","participant_id":"s25","expected_cluster":"async_order","split":"train","is_question":true}
+{"id":"q028","text":"为什么Promise回调比setTimeout先运行？","participant_id":"s26","expected_cluster":"async_order","split":"train","is_question":true}
+{"id":"q029","text":"连续两个await的输出顺序怎么判断？","participant_id":"s27","expected_cluster":"async_order","split":"eval","is_question":true}
+{"id":"q030","text":"事件循环怎样安排异步任务？","participant_id":"s28","expected_cluster":"async_order","split":"eval","is_question":true}
+{"id":"q031","text":"await的请求失败以后怎么捕获异常？","participant_id":"s29","expected_cluster":"async_error","split":"train","is_question":true}
+{"id":"q032","text":"Promise reject为什么没有进入catch？","participant_id":"s30","expected_cluster":"async_error","split":"train","is_question":true}
+{"id":"q033","text":"异步函数抛出的错误在哪里处理？","participant_id":"s31","expected_cluster":"async_error","split":"train","is_question":true}
+{"id":"q034","text":"忘记给await加try catch会怎样？","participant_id":"s32","expected_cluster":"async_error","split":"train","is_question":true}
+{"id":"q035","text":"多个并发请求中一个失败该怎么处理？","participant_id":"s33","expected_cluster":"async_error","split":"eval","is_question":true}
+{"id":"q036","text":"Promise.all报错后其他任务还会执行吗？","participant_id":"s34","expected_cluster":"async_error","split":"eval","is_question":true}
+{"id":"q037","text":"数据库索引为什么能加快查询？","participant_id":"s03","expected_cluster":"db_index_use","split":"train","is_question":true}
+{"id":"q038","text":"B+树索引是怎么减少查询次数的？","participant_id":"s35","expected_cluster":"db_index_use","split":"train","is_question":true}
+{"id":"q039","text":"where条件什么时候可以命中索引？","participant_id":"s36","expected_cluster":"db_index_use","split":"train","is_question":true}
+{"id":"q040","text":"联合索引最左匹配是什么意思？","participant_id":"s37","expected_cluster":"db_index_use","split":"train","is_question":true}
+{"id":"q041","text":"给用户ID加索引为什么查询会变快？","participant_id":"s38","expected_cluster":"db_index_use","split":"eval","is_question":true}
+{"id":"q042","text":"怎样通过执行计划判断有没有走索引？","participant_id":"s39","expected_cluster":"db_index_use","split":"eval","is_question":true}
+{"id":"q043","text":"索引是不是建得越多越好？","participant_id":"s40","expected_cluster":"db_index_cost","split":"train","is_question":true}
+{"id":"q044","text":"为什么索引会拖慢insert？","participant_id":"s41","expected_cluster":"db_index_cost","split":"train","is_question":true}
+{"id":"q045","text":"创建太多索引会占多少磁盘？","participant_id":"s42","expected_cluster":"db_index_cost","split":"train","is_question":true}
+{"id":"q046","text":"更新数据时索引也需要更新吗？","participant_id":"s43","expected_cluster":"db_index_cost","split":"train","is_question":true}
+{"id":"q047","text":"低选择性的字段还值得建索引吗？","participant_id":"s44","expected_cluster":"db_index_cost","split":"eval","is_question":true}
+{"id":"q048","text":"索引维护成本主要来自哪里？","participant_id":"s45","expected_cluster":"db_index_cost","split":"eval","is_question":true}
+{"id":"q049","text":"接口返回404代表什么？","participant_id":"s04","expected_cluster":"http_404","split":"train","is_question":true}
+{"id":"q050","text":"资源不存在为什么是404？","participant_id":"s46","expected_cluster":"http_404","split":"train","is_question":true}
+{"id":"q051","text":"路由明明写了为什么还返回not found？","participant_id":"s47","expected_cluster":"http_404","split":"train","is_question":true}
+{"id":"q052","text":"404是前端问题还是后端问题？","participant_id":"s48","expected_cluster":"http_404","split":"train","is_question":true}
+{"id":"q053","text":"请求地址拼错会收到哪个状态码？","participant_id":"s49","expected_cluster":"http_404","split":"eval","is_question":true}
+{"id":"q054","text":"删除后的接口应该返回404还是410？","participant_id":"s50","expected_cluster":"http_404","split":"eval","is_question":true}
+{"id":"q055","text":"服务器返回500一般是什么错误？","participant_id":"s05","expected_cluster":"http_500","split":"train","is_question":true}
+{"id":"q056","text":"代码抛异常为什么响应是500？","participant_id":"s51","expected_cluster":"http_500","split":"train","is_question":true}
+{"id":"q057","text":"数据库连接失败会导致500吗？","participant_id":"s52","expected_cluster":"http_500","split":"train","is_question":true}
+{"id":"q058","text":"遇到internal server error怎么排查？","participant_id":"s53","expected_cluster":"http_500","split":"train","is_question":true}
+{"id":"q059","text":"500错误应该把堆栈返回给前端吗？","participant_id":"s54","expected_cluster":"http_500","split":"eval","is_question":true}
+{"id":"q060","text":"后端未捕获异常会是什么状态码？","participant_id":"s55","expected_cluster":"http_500","split":"eval","is_question":true}
+{"id":"q061","text":"老师刚才的例子能再讲一次吗？","participant_id":"s56","expected_cluster":"example_repeat","split":"train","is_question":true}
+{"id":"q062","text":"可以重新演示一遍这段代码吗？","participant_id":"s57","expected_cluster":"example_repeat","split":"train","is_question":true}
+{"id":"q063","text":"刚才运行过程太快了能再走一遍吗？","participant_id":"s58","expected_cluster":"example_repeat","split":"train","is_question":true}
+{"id":"q064","text":"能不能把上一个案例重新操作一次？","participant_id":"s59","expected_cluster":"example_repeat","split":"eval","is_question":true}
+{"id":"q065","text":"这节课的代码会发到群里吗？","participant_id":"s60","expected_cluster":"course_material","split":"train","is_question":true}
+{"id":"q066","text":"老师课件在哪里下载？","participant_id":"s61","expected_cluster":"course_material","split":"train","is_question":true}
+{"id":"q067","text":"今天的示例项目能提供源码吗？","participant_id":"s62","expected_cluster":"course_material","split":"train","is_question":true}
+{"id":"q068","text":"课程结束后可以拿到PPT吗？","participant_id":"s63","expected_cluster":"course_material","split":"eval","is_question":true}
+{"id":"q069","text":"老师声音有一点小","participant_id":"s64","expected_cluster":"noise_audio","split":"train","is_question":false}
+{"id":"q070","text":"画面现在卡住了","participant_id":"s65","expected_cluster":"noise_video","split":"train","is_question":false}
+{"id":"q071","text":"收到，谢谢老师","participant_id":"s66","expected_cluster":"noise_ack_071","split":"train","is_question":false}
+{"id":"q072","text":"打卡","participant_id":"s67","expected_cluster":"noise_ack_072","split":"train","is_question":false}
+{"id":"q073","text":"这个不是递归结束条件的问题，我想问性能","participant_id":"s68","expected_cluster":"recursion_stack","split":"eval","is_question":true}
+{"id":"q074","text":"索引并不能让所有查询都更快吧？","participant_id":"s69","expected_cluster":"db_index_cost","split":"eval","is_question":true}
+{"id":"q075","text":"不是404，我这里显示的是500，怎么定位？","participant_id":"s70","expected_cluster":"http_500","split":"eval","is_question":true}
+{"id":"q076","text":"闭包的定义懂了，但怎么避免它泄漏内存？","participant_id":"s71","expected_cluster":"closure_leak","split":"eval","is_question":true}

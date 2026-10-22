@@ -1,0 +1,30 @@
+# QuestionPulse Teacher Copilot Extension
+
+这是 V2-P0 的 Chromium Manifest V3 悬浮助手。它只注入 `https://live.polyv.net/*`，通过教师令牌读取 QuestionPulse 教师快照，不读取摄像头、麦克风、浏览历史或 POLYV 登录信息。
+
+## 本地加载
+
+1. 打开 Edge 的 `edge://extensions`。
+2. 开启“开发人员模式”。
+3. 选择“加载解压缩的扩展”，目录选择本文件夹 `extension/`。
+4. 打开 POLYV 网页开播台，点击右下角 QuestionPulse 脉搏球。
+5. 输入后端地址、课堂 ID 和教师访问令牌。
+
+教师令牌只存储在当前浏览器会话的 `chrome.storage.session` 中，关闭浏览器后自动失效。
+内容脚本不直接跨域请求后端；所有 API 调用经后台 Service Worker 转发，并受 manifest 中的本机 `host_permissions` 限制。
+
+## 当前能力
+
+- 读取受保护的教师快照。
+- 显示课堂状态、疑问 Top 3、独立学生数和仍困惑人数。
+- 执行开始讲解、结束讲解、关闭疑问和重新打开。
+- 生成理解检测草稿、审核发布、结束检测并查看作答统计。
+- 按确定性困惑指数排序疑问，优先显示最需要处理的问题。
+- 每 3 秒刷新，连接失败不影响 POLYV 页面。
+- Shadow DOM 样式隔离。
+
+## 后续
+
+- 拖动位置和侧边栏模式。
+- DeepSeek 讲解建议。
+- 教师账号登录后使用短期令牌替代手工输入。

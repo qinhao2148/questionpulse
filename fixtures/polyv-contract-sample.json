@@ -1,0 +1,21 @@
+{
+  "environment": "contract_test",
+  "channel_id": "contract-channel",
+  "polyv_session_id": "contract-session",
+  "events": [
+    {
+      "external_id": "qa-demo-1001",
+      "viewer_key": "polyv-demo-viewer-a",
+      "content": "递归出口为什么必须存在？",
+      "occurred_at": "2026-10-20T14:00:00Z",
+      "source": "polyv_qa"
+    },
+    {
+      "external_id": "qa-demo-1002",
+      "viewer_key": "polyv-demo-viewer-b",
+      "content": "没有 base case 时程序为什么停不下来？",
+      "occurred_at": "2026-10-20T14:00:05Z",
+      "source": "polyv_qa"
+    }
+  ]
+}
