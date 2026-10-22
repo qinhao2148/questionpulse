@@ -167,6 +167,11 @@ textarea:disabled { color: #766e81; background: #0b0910; cursor: not-allowed; }
 .confusion-detail summary { cursor: pointer; color: #c7b5ef; }
 .confusion-detail div { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .confusion-detail span { padding: 5px 8px; border-radius: 8px; background: #ffffff08; }
+.ai-insight-section { margin-top: 24px; }
+.ai-insight-card { margin-top: 12px; padding: 16px; border: 1px solid #a989ff32; border-radius: 14px; background: #a989ff09; }
+.ai-insight-card > div { display: flex; justify-content: space-between; gap: 16px; }
+.ai-insight-card span { color: #9d94a7; font-size: .75rem; }
+.ai-insight-card p { margin: 9px 0 0; color: #c9c0d1; line-height: 1.55; }
 .timeline-section { margin-top: 20px; }
 .timeline-row { display: grid; grid-template-columns: 82px 12px 1fr; gap: 12px; min-height: 58px; }
 .timeline-row time { color: #877d91; font-size: .75rem; }

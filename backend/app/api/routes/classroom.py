@@ -52,6 +52,7 @@ from app.schemas.classroom import (
     PolyvSyncRequest,
     QuestionCreate,
     QuestionView,
+    ReportAIInsight,
     ReportCluster,
     ReportTimelineEvent,
     SessionCreate,
@@ -1103,6 +1104,47 @@ async def get_report(
         if item.occurred_at.tzinfo
         else item.occurred_at
     )
+    decision_rows = list(
+        (
+            await db.execute(
+                select(AIDecision, AIRun)
+                .join(AIRun, AIDecision.ai_run_id == AIRun.id)
+                .where(
+                    AIRun.session_id == session_id,
+                    AIRun.provider == "deepseek",
+                    AIRun.status == "succeeded",
+                    AIDecision.cluster_id.is_not(None),
+                )
+                .order_by(AIDecision.created_at.desc())
+            )
+        ).all()
+    )
+    report_by_cluster = {item.id: item for item in report_clusters}
+    ai_insights = []
+    seen_insight_clusters = set()
+    for decision, run in decision_rows:
+        if decision.cluster_id in seen_insight_clusters:
+            continue
+        cluster_report = report_by_cluster.get(decision.cluster_id)
+        if cluster_report is None:
+            continue
+        if cluster_report.feedback.still_confused > 0:
+            recommendation = "结合学生仍困惑反馈重新讲解，并用具体反例后再次检测。"
+        elif cluster_report.status != "closed":
+            recommendation = "完成本轮讲解与理解反馈，再依据检测结果决定是否关闭。"
+        else:
+            recommendation = "该疑问已完成闭环，可在下节课开头用一道迁移题快速复核。"
+        ai_insights.append(
+            ReportAIInsight(
+                cluster_id=cluster_report.id,
+                cluster_title=cluster_report.title,
+                normalized_intent=decision.normalized_intent,
+                semantic_reason=decision.reason,
+                recommendation=recommendation,
+                model=run.model,
+            )
+        )
+        seen_insight_clusters.add(decision.cluster_id)
     return SessionReport(
         id=classroom.id,
         title=classroom.title,
@@ -1125,6 +1167,7 @@ async def get_report(
         clusters=report_clusters,
         follow_ups=[item for item in report_clusters if item.feedback.still_confused > 0],
         timeline=timeline,
+        ai_insights=ai_insights,
     )
 
 

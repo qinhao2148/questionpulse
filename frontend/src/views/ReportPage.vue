@@ -76,6 +76,17 @@ onMounted(loadReport)
           <p v-if="!report.follow_ups.length" class="follow-up">当前没有“仍困惑”反馈。</p>
         </article>
       </section>
+      <section class="surface report-section ai-insight-section">
+        <p class="eyebrow">AI TEACHING CLUES</p><h2>AI 教学线索</h2>
+        <p class="evidence-note">下列语义判断来自已审计的 DeepSeek 决策；人数、反馈和检测结果仍以数据库事实为准。</p>
+        <article v-for="insight in report.ai_insights" :key="insight.cluster_id" class="ai-insight-card">
+          <div><strong>{{ insight.cluster_title }}</strong><span>{{ insight.model }}</span></div>
+          <p><b>核心意图：</b>{{ insight.normalized_intent }}</p>
+          <p><b>语义依据：</b>{{ insight.semantic_reason }}</p>
+          <p><b>建议动作：</b>{{ insight.recommendation }}</p>
+        </article>
+        <p v-if="!report.ai_insights.length" class="empty-state">本课堂尚无通过校验的 DeepSeek 语义记录，报告不会伪造 AI 建议。</p>
+      </section>
       <section class="surface report-section timeline-section">
         <p class="eyebrow">CLASSROOM TIMELINE</p><h2>疑问处理时间线</h2>
         <div v-for="(event, index) in report.timeline" :key="`${event.occurred_at}-${index}`" class="timeline-row">

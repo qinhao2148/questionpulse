@@ -141,6 +141,14 @@ export interface SessionReport {
     detail: string
     occurred_at: string
   }>
+  ai_insights: Array<{
+    cluster_id: string
+    cluster_title: string
+    normalized_intent: string
+    semantic_reason: string
+    recommendation: string
+    model: string
+  }>
 }
 
 async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {

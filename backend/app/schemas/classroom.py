@@ -168,6 +168,15 @@ class ReportTimelineEvent(BaseModel):
     occurred_at: datetime
 
 
+class ReportAIInsight(BaseModel):
+    cluster_id: str
+    cluster_title: str
+    normalized_intent: str
+    semantic_reason: str
+    recommendation: str
+    model: str
+
+
 class SessionReport(BaseModel):
     id: str
     title: str
@@ -190,3 +199,4 @@ class SessionReport(BaseModel):
     clusters: list[ReportCluster]
     follow_ups: list[ReportCluster]
     timeline: list[ReportTimelineEvent]
+    ai_insights: list[ReportAIInsight]
