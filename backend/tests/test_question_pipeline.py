@@ -1,6 +1,6 @@
 import asyncio
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -439,6 +439,51 @@ def test_polyv_contract_fixture_maps_and_deduplicates_without_live_call() -> Non
         json={"environment": "contract_test", "action": "recover"},
     )
     assert recovered.json()["data"]["integration_status"] == "contract_verified"
+    app.dependency_overrides.clear()
+
+
+def test_polyv_sync_reconciles_authenticated_student_mirror() -> None:
+    asyncio.run(reset_database())
+    app.dependency_overrides[get_db] = override_db
+    client = RoleAwareTestClient(app)
+    classroom = client.post("/api/v1/sessions", json={"title": "身份镜像"}).json()["data"]
+    session_id = classroom["id"]
+    student = client.post(
+        f"/api/v1/sessions/{session_id}/join",
+        json={"viewer_key": "watch-sdk-viewer", "join_code": classroom["join_code"]},
+    ).json()["data"]
+    mirrored = client.post(
+        f"/api/v1/sessions/{session_id}/questions",
+        json={
+            "participant_id": student["participant_id"],
+            "client_request_id": "mirror-1",
+            "content": "异步异常为什么不会被外层捕获？",
+        },
+    ).json()["data"]
+    synced = client.post(
+        f"/api/v1/sessions/{session_id}/integrations/polyv/events",
+        json={
+            "environment": "contract_test",
+            "channel_id": "channel",
+            "polyv_session_id": "session",
+            "events": [{
+                "external_id": "ask-identity-1",
+                "viewer_key": "platform-side-viewer",
+                "content": "异步异常为什么不会被外层捕获？",
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "source": "polyv_qa",
+            }],
+        },
+    )
+    assert synced.status_code == 200
+    assert synced.json()["data"]["reconciled"] == 1, synced.json()
+    snapshot = client.get(f"/api/v1/sessions/{session_id}/teacher-snapshot").json()
+    questions = [item for cluster in snapshot["clusters"] for item in cluster["questions"]]
+    assert len(questions) == 1
+    assert questions[0]["id"] == mirrored["id"]
+    assert questions[0]["source"] == "polyv_qa"
+    assert questions[0]["external_id"] == "ask-identity-1"
+    assert asyncio.run(participant_keys(session_id)) == ["watch-sdk-viewer"]
     app.dependency_overrides.clear()
 
 

@@ -153,22 +153,25 @@ async function sendQuestion() {
   if (!content || questionInputClosed.value) return
   connectionError.value = ''
   try {
+    const requestId = crypto.randomUUID()
+    let polyvError: unknown = null
     if (polyvConnected.value) {
       try {
         await sendPolyvQuestion(content)
-      } catch (polyvError) {
-        // The player and live-status socket can be ready before POLYV's ask/chat
-        // core is available. Preserve the classroom flow by storing the question
-        // in QuestionPulse; a later POLYV sync can continue independently.
-        await submitQuestion(sessionId.value, participantId.value, content, crypto.randomUUID())
-        polyvConnected.value = false
-        polyvStatus.value = 'degraded'
-        polyvStatusDetail.value = polyvError instanceof Error
-          ? `POLYV 问答暂不可用，疑问已安全保存：${polyvError.message}`
-          : 'POLYV 问答暂不可用，疑问已安全保存'
+      } catch (error) {
+        polyvError = error
       }
-    } else {
-      await submitQuestion(sessionId.value, participantId.value, content, crypto.randomUUID())
+    }
+    // Keep the authenticated QuestionPulse participant attached to the
+    // question. The POLYV management API may return a platform-side viewer id
+    // that differs from the watch SDK id; sync upgrades this mirror in place.
+    await submitQuestion(sessionId.value, participantId.value, content, requestId)
+    if (polyvError) {
+      polyvConnected.value = false
+      polyvStatus.value = 'degraded'
+      polyvStatusDetail.value = polyvError instanceof Error
+        ? `POLYV 问答暂不可用，疑问已安全保存：${polyvError.message}`
+        : 'POLYV 问答暂不可用，疑问已安全保存'
     }
     submitted.value = true
     question.value = ''

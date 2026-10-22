@@ -22,6 +22,7 @@ from app.core.auth import (
 )
 from app.core.config import get_settings
 from app.db.session import get_db
+from app.integrations.base import NormalizedQuestion
 from app.integrations.polyv import PolyvApiError, PolyvNotConfiguredError, PolyvQuestionAdapter
 from app.models.classroom import (
     AIDecision,
@@ -126,6 +127,61 @@ async def external_participant(
     elif participant.viewer_key == raw_viewer_key:
         participant.viewer_key = pseudonym
     return participant
+
+
+async def store_external_question(
+    db: AsyncSession,
+    session_id: str,
+    event: NormalizedQuestion,
+) -> tuple[Question, str]:
+    """Store a POLYV question while preserving the authenticated web identity.
+
+    The management API can expose a platform viewer id that differs from the
+    watch SDK user id. Student submissions are therefore mirrored locally and
+    reconciled by normalized content when POLYV syncs.
+    """
+    existing = await db.scalar(
+        select(Question).where(
+            Question.session_id == session_id,
+            Question.source == event.source,
+            Question.external_id == event.external_id,
+        )
+    )
+    if existing is not None:
+        return existing, "duplicate"
+
+    mirror = await db.scalar(
+        select(Question)
+        .join(Submission, Submission.question_id == Question.id)
+        .where(
+            Question.session_id == session_id,
+            Question.source == "questionpulse",
+            Question.external_id.is_(None),
+            Question.normalized_content == normalize(event.content),
+        )
+        .order_by(Question.created_at.desc())
+    )
+    occurred_at = event.occurred_at.replace(tzinfo=None)
+    if mirror is not None:
+        mirror.source = event.source
+        mirror.external_id = event.external_id
+        mirror.occurred_at = occurred_at
+        return mirror, "reconciled"
+
+    participant = await external_participant(db, session_id, event.viewer_key)
+    question = Question(
+        session_id=session_id,
+        participant_id=participant.id,
+        content=event.content.strip(),
+        normalized_content=normalize(event.content),
+        source=event.source,
+        external_id=event.external_id,
+        occurred_at=occurred_at,
+    )
+    db.add(question)
+    await db.flush()
+    await assign_question(db, question)
+    return question, "accepted"
 
 
 def require_teacher(classroom: ClassroomSession, authorization: str | None) -> None:
@@ -675,35 +731,18 @@ async def import_polyv_contract_events(
     if classroom.status == "ended":
         raise HTTPException(status_code=409, detail="session_ended")
     accepted = 0
+    reconciled = 0
     duplicates = 0
     pending = 0
     question_ids = []
     for event in payload.events:
-        participant = await external_participant(db, session_id, event.viewer_key)
-        existing = await db.scalar(
-            select(Question).where(
-                Question.session_id == session_id,
-                Question.source == event.source,
-                Question.external_id == event.external_id,
-            )
-        )
-        if existing is not None:
+        question, outcome = await store_external_question(db, session_id, event)
+        if outcome == "duplicate":
             duplicates += 1
-            question_ids.append(existing.id)
+            question_ids.append(question.id)
             continue
-        question = Question(
-            session_id=session_id,
-            participant_id=participant.id,
-            content=event.content.strip(),
-            normalized_content=normalize(event.content),
-            source=event.source,
-            external_id=event.external_id,
-            occurred_at=event.occurred_at.replace(tzinfo=None),
-        )
-        db.add(question)
-        await db.flush()
-        await assign_question(db, question)
         accepted += 1
+        reconciled += outcome == "reconciled"
         pending += question.processing_status == "pending"
         question_ids.append(question.id)
     classroom.polyv_channel_id = payload.channel_id
@@ -717,6 +756,7 @@ async def import_polyv_contract_events(
         "data": {
             "environment": payload.environment,
             "accepted": accepted,
+            "reconciled": reconciled,
             "duplicates": duplicates,
             "pending": pending,
             "question_ids": question_ids,
@@ -760,32 +800,14 @@ async def sync_polyv_questions(
         await db.commit()
         raise HTTPException(status_code=502, detail="polyv_api_unavailable") from exc
 
-    accepted = duplicates = pending = 0
+    accepted = duplicates = pending = reconciled = 0
     for event in events:
-        participant = await external_participant(db, session_id, event.viewer_key)
-        existing = await db.scalar(
-            select(Question).where(
-                Question.session_id == session_id,
-                Question.source == event.source,
-                Question.external_id == event.external_id,
-            )
-        )
-        if existing is not None:
+        question, outcome = await store_external_question(db, session_id, event)
+        if outcome == "duplicate":
             duplicates += 1
             continue
-        question = Question(
-            session_id=session_id,
-            participant_id=participant.id,
-            content=event.content,
-            normalized_content=normalize(event.content),
-            source=event.source,
-            external_id=event.external_id,
-            occurred_at=event.occurred_at.replace(tzinfo=None),
-        )
-        db.add(question)
-        await db.flush()
-        await assign_question(db, question)
         accepted += 1
+        reconciled += outcome == "reconciled"
         pending += question.processing_status == "pending"
     classroom.polyv_channel_id = channel_id
     classroom.polyv_session_id = (
@@ -800,6 +822,7 @@ async def sync_polyv_questions(
     return {
         "data": {
             "accepted": accepted,
+            "reconciled": reconciled,
             "duplicates": duplicates,
             "pending": pending,
             "fetched": len(events),
