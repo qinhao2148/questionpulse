@@ -228,7 +228,7 @@ onUnmounted(() => {
         <div class="card-row"><span class="status awaiting_feedback">理解检测</span><span>{{ check.response_count }}/{{ check.target_count }} 已答</span></div>
         <h3>{{ check.stem }}</h3>
         <div class="check-options">
-          <button v-for="option in check.options" :key="option.key" :disabled="answeringCheck === check.id" :class="{ selected: check.my_option_key === option.key }" @click="answer(check, option.key)"><strong>{{ option.key }}</strong>{{ option.content }}</button>
+          <button v-for="option in check.options" :key="option.key" :disabled="answeringCheck === check.id || check.my_option_key !== null" :class="{ selected: check.my_option_key === option.key }" @click="answer(check, option.key)"><strong>{{ option.key }}</strong>{{ option.content }}</button>
         </div>
         <p v-if="check.my_is_correct !== null" :class="check.my_is_correct ? 'success-note' : 'error-note'">{{ check.my_is_correct ? '回答正确，已经掌握。' : `暂未掌握，正确答案是 ${check.correct_option_key}。` }} {{ check.explanation }}</p>
       </section>

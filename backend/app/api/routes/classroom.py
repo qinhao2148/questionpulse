@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import ClusterCandidate, DeepSeekAnalyzer, DeepSeekError, QuizDraft, QuizOptionDraft
@@ -1522,22 +1523,25 @@ async def answer_check_question(
             CheckResponse.participant_id == participant.id,
         )
     )
-    if response is None:
-        response = CheckResponse(
-            check_question_id=check_id,
-            participant_id=participant.id,
-            selected_option_key=payload.option_key,
-            is_correct=payload.option_key == check.correct_option_key,
-        )
-        db.add(response)
-    else:
-        response.selected_option_key = payload.option_key
-        response.is_correct = payload.option_key == check.correct_option_key
-    await db.commit()
+    if response is not None:
+        raise HTTPException(status_code=409, detail="check_already_answered")
+    is_correct = payload.option_key == check.correct_option_key
+    response = CheckResponse(
+        check_question_id=check_id,
+        participant_id=participant.id,
+        selected_option_key=payload.option_key,
+        is_correct=is_correct,
+    )
+    db.add(response)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="check_already_answered") from exc
     return {
         "data": {
             "selected_option_key": response.selected_option_key,
-            "is_correct": response.is_correct,
+            "is_correct": is_correct,
             "correct_option_key": check.correct_option_key,
             "explanation": check.explanation,
         }

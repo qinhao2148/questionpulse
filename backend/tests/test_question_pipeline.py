@@ -482,6 +482,13 @@ def test_formative_check_is_reviewed_targeted_and_frozen_after_class() -> None:
     assert answer.status_code == 200
     assert answer.json()["data"]["is_correct"] is True
     assert answer.json()["data"]["explanation"]
+    repeated_answer = client.put(
+        answer_url,
+        headers=target_headers,
+        json={"participant_id": student["participant_id"], "option_key": "B"},
+    )
+    assert repeated_answer.status_code == 409
+    assert repeated_answer.json()["detail"] == "check_already_answered"
     assert client.put(
         answer_url,
         headers=outsider_headers,

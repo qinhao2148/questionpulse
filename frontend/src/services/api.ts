@@ -166,6 +166,7 @@ async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
       access_denied: '没有访问该页面或操作的权限', invalid_join_code: '课堂加入码不正确',
       cannot_detach_only_question: '疑问簇只有一条问题，无法继续拆分',
       question_not_pending: '该问题当前无需重试', version_conflict: '数据已更新，请刷新后重试',
+      check_already_answered: '本题已经提交，答案不能再次修改',
       polyv_credentials_not_configured: 'POLYV App ID 或 App Secret 尚未配置',
       polyv_channel_not_configured: '尚未配置 POLYV 测试频道号',
       polyv_api_unavailable: 'POLYV API 调用失败，请查看接入状态后重试',
