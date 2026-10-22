@@ -49,6 +49,17 @@ const stageBadgeLabel = computed(() => {
   if (streamEnded.value) return '直播已结束'
   return polyvStatus.value === 'playing' ? 'POLYV LIVE' : '课堂直播'
 })
+const connectionLabel = computed(() => {
+  if (sessionEnded.value) return '课堂记录已归档'
+  if (streamEnded.value) return 'POLYV 直播已结束，等待教师归档课堂'
+  if (snapshot.value?.integration_status === 'connected') return 'POLYV 真实问答数据已连接'
+  if (snapshot.value?.integration_status === 'degraded') return 'POLYV 问答同步暂时断开，疑问仍会安全保存'
+  if (polyvStatus.value === 'playing' || polyvStatus.value === 'ready') {
+    return 'POLYV 直播已连接 · 问答数据等待教师同步'
+  }
+  if (polyvStatus.value === 'waiting') return polyvStatusDetail.value
+  return '本地课堂模式'
+})
 const stageState = computed(() => sessionEnded.value
   ? 'ended'
   : playerStarted.value ? 'player' : 'placeholder')
@@ -230,7 +241,7 @@ onUnmounted(() => {
         <h2>哪里还没听懂？</h2>
         <textarea v-model="question" :disabled="questionInputClosed" maxlength="500" :placeholder="sessionEnded ? '课堂已结束，无法继续提问' : streamEnded ? '直播已结束，无法继续提交新疑问' : '输入你的问题，例如：没有结束条件时会发生什么？'" />
         <div class="input-footer"><span>{{ question.length }}/500</span><button :disabled="!participantId || questionInputClosed" @click="sendQuestion">{{ sessionEnded ? '课堂已结束' : streamEnded ? '直播已结束' : '提交疑问' }}</button></div>
-        <p class="mode-note">{{ sessionEnded ? '课堂记录已归档' : streamEnded ? 'POLYV 直播已结束，等待教师归档课堂' : snapshot?.integration_status === 'connected' ? 'POLYV 真实数据已连接' : snapshot?.integration_status === 'degraded' ? 'POLYV 暂时断开，问题将保存在本地' : '本地课堂模式' }}</p>
+        <p class="mode-note">{{ connectionLabel }}</p>
         <p v-if="submitted" class="success-note">已收到。{{ polyvConnected ? '问题已发送到 POLYV，等待教师端同步分析。' : '你的问题正在匹配相似疑问。' }}</p>
         <p v-if="connectionError" class="error-note">{{ connectionError }}</p>
       </section>
