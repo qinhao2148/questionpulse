@@ -38,9 +38,11 @@ let reconnectTimer: number | undefined
 const question = ref('')
 const submitted = ref(false)
 const sendingFeedback = ref(false)
-const active = computed(() => snapshot.value?.clusters.find(
-  (item) => item.questions.length > 0 && ['addressing', 'awaiting_feedback'].includes(item.status),
-))
+const active = computed(() => snapshot.value?.status === 'ended'
+  ? undefined
+  : snapshot.value?.clusters.find(
+    (item) => item.questions.length > 0 && ['addressing', 'awaiting_feedback'].includes(item.status),
+  ))
 const sessionEnded = computed(() => snapshot.value?.status === 'ended')
 const streamEnded = computed(() => polyvStatus.value === 'ended')
 const questionInputClosed = computed(() => sessionEnded.value || streamEnded.value)
