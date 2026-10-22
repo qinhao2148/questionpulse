@@ -74,7 +74,11 @@ class PolyvQuestionAdapter:
             response = await client.get(url, params=signed_params)
             response.raise_for_status()
             body = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
+        except httpx.HTTPStatusError as exc:
+            raise PolyvApiError(
+                f"POLYV HTTP status: {exc.response.status_code}"
+            ) from exc
+        except (httpx.RequestError, ValueError) as exc:
             raise PolyvApiError(f"POLYV transport failed: {type(exc).__name__}") from exc
         if body.get("code") != 200 or body.get("status") == "error":
             error = body.get("error") or {}

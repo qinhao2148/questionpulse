@@ -124,3 +124,15 @@ async def test_fetch_questions_hides_remote_error_details() -> None:
         adapter = PolyvQuestionAdapter("app", "secret", client=client)
         with pytest.raises(PolyvApiError, match="20001"):
             await adapter.fetch_questions("4146015")
+
+
+@pytest.mark.asyncio
+async def test_fetch_questions_reports_only_safe_http_status() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="upstream internal details")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = PolyvQuestionAdapter("app", "secret", client=client)
+        with pytest.raises(PolyvApiError, match="POLYV HTTP status: 503") as error:
+            await adapter.fetch_questions("4146015")
+    assert "internal details" not in str(error.value)
