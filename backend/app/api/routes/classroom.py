@@ -372,6 +372,8 @@ async def create_session(payload: SessionCreate, db: Database) -> dict:
 @router.post("/sessions/{session_id}/join")
 async def join_session(session_id: str, payload: JoinRequest, db: Database) -> dict:
     classroom = await require_session(db, session_id)
+    if classroom.status == "ended":
+        raise HTTPException(status_code=409, detail="session_ended")
     if classroom.join_code is not None and payload.join_code != classroom.join_code:
         raise HTTPException(status_code=403, detail="invalid_join_code")
     existing = await db.scalar(

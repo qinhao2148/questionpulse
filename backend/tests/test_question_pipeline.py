@@ -218,7 +218,8 @@ def test_state_feedback_and_report_loop() -> None:
     asyncio.run(reset_database())
     app.dependency_overrides[get_db] = override_db
     client = RoleAwareTestClient(app)
-    session_id = client.post("/api/v1/sessions", json={"title": "反馈闭环"}).json()["data"]["id"]
+    classroom = client.post("/api/v1/sessions", json={"title": "反馈闭环"}).json()["data"]
+    session_id = classroom["id"]
     participants = []
     for key in ("loop-a", "loop-b"):
         participant = client.post(
@@ -328,6 +329,12 @@ def test_state_feedback_and_report_loop() -> None:
     assert ended.json()["data"]["status"] == "ended"
     ended_report = client.get(f"/api/v1/sessions/{session_id}/report").json()
     assert ended_report["status"] == "ended"
+    rejected_join = client.post(
+        f"/api/v1/sessions/{session_id}/join",
+        json={"viewer_key": "late-student", "join_code": classroom["join_code"]},
+    )
+    assert rejected_join.status_code == 409
+    assert rejected_join.json()["detail"] == "session_ended"
     rejected_question = client.post(
         f"/api/v1/sessions/{session_id}/questions",
         json={
