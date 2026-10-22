@@ -62,7 +62,12 @@ onMounted(loadReport)
           <p class="eyebrow">TOP QUESTIONS</p><h2>高频疑问</h2>
           <div v-for="(cluster, index) in report.clusters" :key="cluster.id" class="rank-row">
             <b>{{ String(index + 1).padStart(2, '0') }}</b>
-            <div><strong>{{ cluster.title }}</strong><span>{{ cluster.participant_count }} 人 · {{ cluster.question_count }} 条问题 · {{ cluster.status }}</span><details><summary>查看原始问题</summary><p v-for="question in cluster.questions" :key="question.id">{{ question.content }}</p></details></div>
+            <div><strong>{{ cluster.title }}</strong><span>{{ cluster.participant_count }} 人 · {{ cluster.question_count }} 条问题 · {{ cluster.status }}</span>
+              <div v-if="cluster.feedback_history?.length" class="round-history">
+                <span v-for="round in cluster.feedback_history" :key="round.round">第 {{ round.round }} 轮：{{ round.responses }}/{{ round.targets }} 已反馈，{{ round.still_confused }} 人仍困惑</span>
+              </div>
+              <details><summary>查看原始问题</summary><p v-for="question in cluster.questions" :key="question.id">{{ question.content }}</p></details>
+            </div>
           </div>
           <p v-if="!report.clusters.length" class="empty-state">本课堂还没有问题。</p>
         </article>

@@ -141,9 +141,12 @@ def require_student(participant: Participant, authorization: str | None) -> None
 
 
 async def feedback_summary(
-    db: AsyncSession, cluster: Cluster, participant_id: str | None = None
+    db: AsyncSession,
+    cluster: Cluster,
+    participant_id: str | None = None,
+    round_number: int | None = None,
 ) -> FeedbackSummary:
-    current_round = cluster.feedback_round
+    current_round = cluster.feedback_round if round_number is None else round_number
     if current_round == 0:
         return FeedbackSummary(round=0, targets=0, responses=0, understood=0, still_confused=0)
     targets = await db.scalar(
@@ -1059,6 +1062,10 @@ async def get_report(
                 participant_count=len({question.participant_id for question in members}),
                 question_count=len(members),
                 feedback=await feedback_summary(db, cluster),
+                feedback_history=[
+                    await feedback_summary(db, cluster, round_number=round_number)
+                    for round_number in range(1, cluster.feedback_round + 1)
+                ],
                 questions=[question_view(question) for question in members],
             )
         )

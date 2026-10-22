@@ -160,6 +160,7 @@ class ReportCluster(BaseModel):
     participant_count: int
     question_count: int
     feedback: FeedbackSummary
+    feedback_history: list[FeedbackSummary]
     questions: list[QuestionView]
 
 

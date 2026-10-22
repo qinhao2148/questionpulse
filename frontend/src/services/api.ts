@@ -53,6 +53,7 @@ export interface Cluster {
   version: number
   feedback_round: number
   feedback: FeedbackSummary
+  feedback_history?: FeedbackSummary[]
   participant_count: number
   question_count: number
   confusion_score: number

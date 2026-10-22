@@ -172,6 +172,8 @@ textarea:disabled { color: #766e81; background: #0b0910; cursor: not-allowed; }
 .ai-insight-card > div { display: flex; justify-content: space-between; gap: 16px; }
 .ai-insight-card span { color: #9d94a7; font-size: .75rem; }
 .ai-insight-card p { margin: 9px 0 0; color: #c9c0d1; line-height: 1.55; }
+.round-history { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.round-history span { padding: 4px 7px; border-radius: 7px; color: #c7b5ef; background: #a989ff10; font-size: .72rem; }
 .timeline-section { margin-top: 20px; }
 .timeline-row { display: grid; grid-template-columns: 82px 12px 1fr; gap: 12px; min-height: 58px; }
 .timeline-row time { color: #877d91; font-size: .75rem; }

@@ -328,6 +328,16 @@ def test_state_feedback_and_report_loop() -> None:
     assert report["feedback_coverage"] == 0.5
     assert report["still_confused"] == 1
     assert len(report["follow_ups"]) == 1
+    assert report["clusters"][0]["feedback_history"] == [
+        {
+            "round": 1,
+            "targets": 2,
+            "responses": 1,
+            "understood": 0,
+            "still_confused": 1,
+            "my_result": None,
+        }
+    ]
     assert any(item["kind"] == "status_changed" for item in report["timeline"])
     assert any(item["kind"] == "question_received" for item in report["timeline"])
 
