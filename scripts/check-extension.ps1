@@ -56,4 +56,7 @@ if ($pairing -notmatch 'ALLOWED_ORIGINS' -or $pairing -notmatch 'ALLOWED_API_BAS
     throw 'Teacher-page pairing must validate origin, API base, and identifiers.'
 }
 
+node.exe (Join-Path $PSScriptRoot 'test-extension-pairing.mjs') (Join-Path $extensionRoot 'pairing.js')
+if ($LASTEXITCODE -ne 0) { throw 'Extension teacher-page pairing behavior failed.' }
+
 Write-Host 'Extension checks passed.' -ForegroundColor Green
