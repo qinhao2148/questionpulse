@@ -35,6 +35,16 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
+    @field_validator("llm_base_url", mode="before")
+    @classmethod
+    def default_llm_base_url(cls, value: object) -> object:
+        return value or "https://api.deepseek.com"
+
+    @field_validator("llm_model", mode="before")
+    @classmethod
+    def default_llm_model(cls, value: object) -> object:
+        return value or "deepseek-flash"
+
 
 @lru_cache
 def get_settings() -> Settings:
