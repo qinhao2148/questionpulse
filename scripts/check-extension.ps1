@@ -47,6 +47,9 @@ if ($content -notmatch 'function stopPolling' -or $content -notmatch "if \(!root
 if ($content -notmatch 'extension context invalidated' -or $content -notmatch 'chrome\.runtime\.lastError') {
     throw 'Extension must handle a stale content-script context after reload.'
 }
+if ($content -notmatch 'showAllClusters' -or $content -notmatch 'qp-toggle-clusters' -or $content -notmatch '\[\.\.\.openClusters\]') {
+    throw 'Extension must expose every active question while prioritizing the Top 3.'
+}
 $background = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $extensionRoot 'background.js')
 if ($background -notmatch 'chrome\.runtime\.onMessage' -or $background -notmatch '\bfetch\s*\(') {
     throw 'Extension background API bridge is missing.'

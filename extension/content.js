@@ -74,6 +74,7 @@
   let snapshot = null
   let checks = []
   let suppressOpen = false
+  let showAllClusters = false
 
   function stopPolling() {
     clearInterval(timer)
@@ -190,7 +191,8 @@
     if (snapshot?.status === 'ended') clearInterval(timer)
     const clusters = snapshot?.clusters || []
     const openClusters = clusters.filter((item) => item.status !== 'closed')
-    const priorityClusters = [...clusters].sort((a, b) => b.confusion_score - a.confusion_score)
+    const priorityClusters = [...openClusters].sort((a, b) => b.confusion_score - a.confusion_score)
+    const visibleClusters = showAllClusters ? priorityClusters : priorityClusters.slice(0, 3)
     count.textContent = String(openClusters.length)
     count.classList.toggle('qp-hidden', openClusters.length === 0)
     body.innerHTML = `
@@ -201,7 +203,7 @@
       <section class="qp-card">
         <div class="qp-eyebrow">QUESTION PRIORITY</div><strong>当前高优先级疑问</strong>
         <div class="qp-list">
-          ${priorityClusters.slice(0, 3).map((cluster) => {
+          ${visibleClusters.map((cluster) => {
             const action = nextAction(cluster)
             const check = checks.find((item) => item.cluster_id === cluster.id)
             return `<article class="qp-cluster">
@@ -217,10 +219,15 @@
             </article>`
           }).join('') || '<div class="qp-empty">暂时没有课堂疑问</div>'}
         </div>
+        ${priorityClusters.length > 3 ? `<div class="qp-actions"><button class="qp-button" id="qp-toggle-clusters">${showAllClusters ? '仅看 Top 3' : `查看全部 ${priorityClusters.length} 个待处理疑问`}</button></div>` : ''}
       </section>
       <section class="qp-card"><div class="qp-row"><span class="qp-muted">完整配置、原始问题和报告请在教师后台查看。</span><button class="qp-button" id="qp-refresh">刷新</button></div></section>
     `
     root.getElementById('qp-refresh')?.addEventListener('click', refresh)
+    root.getElementById('qp-toggle-clusters')?.addEventListener('click', () => {
+      showAllClusters = !showAllClusters
+      renderSnapshot()
+    })
     root.querySelectorAll('[data-cluster]').forEach((button) => button.addEventListener('click', changeStatus))
     root.querySelectorAll('[data-generate-check]').forEach((button) => button.addEventListener('click', generateCheck))
     root.querySelectorAll('[data-approve-check]').forEach((button) => button.addEventListener('click', approveCheck))
