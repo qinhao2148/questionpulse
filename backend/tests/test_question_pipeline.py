@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.api.routes import classroom as classroom_routes
 from app.api.routes.classroom import confusion_signal
 from app.db.base import Base
 from app.db.session import get_db
@@ -502,7 +503,7 @@ def test_formative_check_is_reviewed_targeted_and_frozen_after_class() -> None:
     app.dependency_overrides.clear()
 
 
-def test_role_boundaries_reject_cross_role_access() -> None:
+def test_role_boundaries_reject_cross_role_access(monkeypatch) -> None:
     asyncio.run(reset_database())
     app.dependency_overrides[get_db] = override_db
     client = TestClient(app)
@@ -540,4 +541,18 @@ def test_role_boundaries_reject_cross_role_access() -> None:
     assert student_snapshot.status_code == 200
     assert all("ai_semantic_reason" not in item for item in student_snapshot.json()["clusters"])
     assert all("ai_normalized_intent" in item for item in teacher_snapshot.json()["clusters"])
+    expired_settings = classroom_routes.get_settings().model_copy(
+        update={"access_token_ttl_hours": 0}
+    )
+    monkeypatch.setattr(classroom_routes, "get_settings", lambda: expired_settings)
+    expired_student = client.post(
+        f"/api/v1/sessions/{session_id}/join",
+        json={"viewer_key": "expired-student", "join_code": classroom["join_code"]},
+    ).json()["data"]
+    expired_headers = {"Authorization": f"Bearer {expired_student['access_token']}"}
+    expired_snapshot = client.get(
+        f"/api/v1/sessions/{session_id}/student-snapshot", headers=expired_headers
+    )
+    assert expired_snapshot.status_code == 403
+    assert expired_snapshot.json()["detail"] == "access_expired"
     app.dependency_overrides.clear()

@@ -585,6 +585,11 @@ async def resolve_student(
     )
     if participant is None:
         raise HTTPException(status_code=403, detail="access_denied")
+    verify_access_token(
+        participant.access_token_hash,
+        authorization,
+        participant.access_token_expires_at,
+    )
     return participant
 
 
