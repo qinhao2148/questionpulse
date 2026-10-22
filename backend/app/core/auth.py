@@ -19,6 +19,13 @@ def token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def pseudonymize_external_viewer(viewer_key: str, secret_key: str) -> str:
+    digest = hmac.new(
+        secret_key.encode("utf-8"), viewer_key.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return f"polyv_{digest}"
+
+
 def bearer_token(authorization: str | None) -> str | None:
     if not authorization:
         return None

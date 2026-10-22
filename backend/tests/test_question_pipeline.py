@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -11,6 +12,7 @@ from app.api.routes.classroom import confusion_signal
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.models.classroom import Participant
 from app.schemas.classroom import FeedbackSummary
 
 engine = create_async_engine(
@@ -66,6 +68,15 @@ async def reset_database() -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.drop_all)
         await connection.run_sync(Base.metadata.create_all)
+
+
+async def participant_keys(session_id: str) -> list[str]:
+    async with session_factory() as session:
+        return list(
+            await session.scalars(
+                select(Participant.viewer_key).where(Participant.session_id == session_id)
+            )
+        )
 
 
 def test_confusion_signal_exposes_factual_components_and_check_errors() -> None:
@@ -403,6 +414,9 @@ def test_polyv_contract_fixture_maps_and_deduplicates_without_live_call() -> Non
     question = snapshot["clusters"][0]["questions"][0]
     assert question["source"] == "polyv_qa"
     assert question["external_id"] == "qa-1001"
+    stored_viewers = asyncio.run(participant_keys(session_id))
+    assert stored_viewers and all(item.startswith("polyv_") for item in stored_viewers)
+    assert "polyv-viewer-a" not in stored_viewers
     degraded = client.post(
         f"/api/v1/sessions/{session_id}/integrations/polyv/drill",
         json={"environment": "contract_test", "action": "degrade", "reason": "timeout"},

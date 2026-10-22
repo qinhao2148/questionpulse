@@ -16,6 +16,7 @@ from app.core.auth import (
     bearer_token,
     issue_access_token,
     issue_join_code,
+    pseudonymize_external_viewer,
     token_digest,
     verify_access_token,
 )
@@ -104,6 +105,27 @@ async def require_active_session(db: AsyncSession, session_id: str) -> Classroom
     if classroom.status == "ended":
         raise HTTPException(status_code=409, detail="session_ended")
     return classroom
+
+
+async def external_participant(
+    db: AsyncSession, session_id: str, raw_viewer_key: str
+) -> Participant:
+    pseudonym = pseudonymize_external_viewer(
+        raw_viewer_key, get_settings().participant_pseudonym_key
+    )
+    participant = await db.scalar(
+        select(Participant).where(
+            Participant.session_id == session_id,
+            Participant.viewer_key.in_([pseudonym, raw_viewer_key]),
+        )
+    )
+    if participant is None:
+        participant = Participant(session_id=session_id, viewer_key=pseudonym)
+        db.add(participant)
+        await db.flush()
+    elif participant.viewer_key == raw_viewer_key:
+        participant.viewer_key = pseudonym
+    return participant
 
 
 def require_teacher(classroom: ClassroomSession, authorization: str | None) -> None:
@@ -654,6 +676,7 @@ async def import_polyv_contract_events(
     pending = 0
     question_ids = []
     for event in payload.events:
+        participant = await external_participant(db, session_id, event.viewer_key)
         existing = await db.scalar(
             select(Question).where(
                 Question.session_id == session_id,
@@ -665,16 +688,6 @@ async def import_polyv_contract_events(
             duplicates += 1
             question_ids.append(existing.id)
             continue
-        participant = await db.scalar(
-            select(Participant).where(
-                Participant.session_id == session_id,
-                Participant.viewer_key == event.viewer_key,
-            )
-        )
-        if participant is None:
-            participant = Participant(session_id=session_id, viewer_key=event.viewer_key)
-            db.add(participant)
-            await db.flush()
         question = Question(
             session_id=session_id,
             participant_id=participant.id,
@@ -746,6 +759,7 @@ async def sync_polyv_questions(
 
     accepted = duplicates = pending = 0
     for event in events:
+        participant = await external_participant(db, session_id, event.viewer_key)
         existing = await db.scalar(
             select(Question).where(
                 Question.session_id == session_id,
@@ -756,15 +770,6 @@ async def sync_polyv_questions(
         if existing is not None:
             duplicates += 1
             continue
-        participant = await db.scalar(
-            select(Participant).where(
-                Participant.session_id == session_id, Participant.viewer_key == event.viewer_key
-            )
-        )
-        if participant is None:
-            participant = Participant(session_id=session_id, viewer_key=event.viewer_key)
-            db.add(participant)
-            await db.flush()
         question = Question(
             session_id=session_id,
             participant_id=participant.id,
