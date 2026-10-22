@@ -530,10 +530,14 @@ def test_role_boundaries_reject_cross_role_access() -> None:
     assert client.post(
         f"/api/v1/sessions/{session_id}/end", headers=student_headers, json={}
     ).status_code == 403
-    assert client.get(
+    teacher_snapshot = client.get(
         f"/api/v1/sessions/{session_id}/teacher-snapshot", headers=teacher_headers
-    ).status_code == 200
-    assert client.get(
+    )
+    assert teacher_snapshot.status_code == 200
+    student_snapshot = client.get(
         f"/api/v1/sessions/{session_id}/student-snapshot", headers=student_headers
-    ).status_code == 200
+    )
+    assert student_snapshot.status_code == 200
+    assert all("ai_semantic_reason" not in item for item in student_snapshot.json()["clusters"])
+    assert all("ai_normalized_intent" in item for item in teacher_snapshot.json()["clusters"])
     app.dependency_overrides.clear()

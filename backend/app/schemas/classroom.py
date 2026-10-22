@@ -132,6 +132,9 @@ class ClusterView(BaseModel):
     confusion_score: float
     confusion_level: Literal["low", "medium", "high"]
     confusion_breakdown: ConfusionBreakdown
+    ai_normalized_intent: str | None = None
+    ai_semantic_reason: str | None = None
+    ai_model: str | None = None
     questions: list[QuestionView]
 
 

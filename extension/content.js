@@ -40,6 +40,8 @@
       .qp-cluster { border: 1px solid #ffffff12; border-radius: 12px; padding: 11px; background: #0d0912; }
       .qp-title { font-weight: 700; margin: 3px 0 7px; }
       .qp-meta { color: #a89db2; font-size: 12px; }
+      .qp-ai { margin-top: 8px; padding: 8px 9px; border-radius: 9px; color: #ddcff7; background: #9f77ec14; font-size: 12px; }
+      .qp-ai small { display: block; margin-top: 4px; color: #a89db2; line-height: 1.45; }
       .qp-actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
       .qp-button { border: 1px solid #9f77ec66; border-radius: 9px; background: #6f41bd33; color: #efe7ff; cursor: pointer; padding: 7px 10px; font-size: 12px; }
       .qp-button.primary { border-color: #9e72ff; background: #8254de; }
@@ -177,6 +179,7 @@
               <div class="qp-row"><span class="qp-meta">${escapeHtml(cluster.status)}</span><span class="qp-meta">${cluster.participant_count} 人 · ${cluster.question_count} 条</span></div>
               <div class="qp-title">${escapeHtml(cluster.title)}</div>
               <div class="qp-meta">困惑指数 ${cluster.confusion_score} · 仍困惑 ${cluster.feedback.still_confused} 人</div>
+              ${cluster.ai_normalized_intent ? `<div class="qp-ai"><b>AI 识别：</b>${escapeHtml(cluster.ai_normalized_intent)}${cluster.ai_semantic_reason ? `<small>${escapeHtml(cluster.ai_semantic_reason)}</small>` : ''}</div>` : ''}
               ${snapshot.status !== 'ended' && action ? `<div class="qp-actions"><button class="qp-button primary" data-cluster="${cluster.id}" data-version="${cluster.version}" data-status="${action[0]}">${action[1]}</button></div>` : ''}
               ${check ? `<div class="qp-meta">理解检测：${escapeHtml(check.status)} · ${check.response_count}/${check.target_count} 已答 · ${check.correct_count} 人正确</div>` : ''}
               ${snapshot.status !== 'ended' && cluster.status === 'awaiting_feedback' && !check ? `<div class="qp-actions"><button class="qp-button" data-generate-check="${cluster.id}">生成检测草稿</button></div>` : ''}

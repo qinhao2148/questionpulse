@@ -462,6 +462,7 @@ async def build_snapshot(
     db: AsyncSession,
     classroom: ClassroomSession,
     participant_id: str | None = None,
+    include_teacher_insights: bool = False,
 ) -> Snapshot:
     session_id = classroom.id
     clusters = list(await db.scalars(select(Cluster).where(Cluster.session_id == session_id)))
@@ -479,6 +480,23 @@ async def build_snapshot(
         or 0
     )
     one_minute_ago = datetime.now() - timedelta(minutes=1)
+    insight_by_cluster = {}
+    if include_teacher_insights:
+        rows = (
+            await db.execute(
+                select(AIDecision, AIRun)
+                .join(AIRun, AIDecision.ai_run_id == AIRun.id)
+                .where(
+                    AIRun.session_id == session_id,
+                    AIRun.provider == "deepseek",
+                    AIRun.status == "succeeded",
+                    AIDecision.cluster_id.is_not(None),
+                )
+                .order_by(AIDecision.created_at.desc())
+            )
+        ).all()
+        for decision, run in rows:
+            insight_by_cluster.setdefault(decision.cluster_id, (decision, run))
     cluster_views = []
     for cluster in clusters:
         members = [question for question in questions if question.cluster_id == cluster.id]
@@ -507,6 +525,7 @@ async def build_snapshot(
             len(check_rows),
             sum(item.is_correct for item in check_rows),
         )
+        insight = insight_by_cluster.get(cluster.id)
         cluster_views.append(
             ClusterView(
                 id=cluster.id,
@@ -520,6 +539,9 @@ async def build_snapshot(
                 confusion_score=confusion_score,
                 confusion_level=confusion_level,
                 confusion_breakdown=confusion_breakdown,
+                ai_normalized_intent=insight[0].normalized_intent if insight else None,
+                ai_semantic_reason=insight[0].reason if insight else None,
+                ai_model=insight[1].model if insight else None,
                 questions=[
                     question_view(question)
                     for question in members
@@ -566,7 +588,11 @@ async def resolve_student(
     return participant
 
 
-@router.get("/sessions/{session_id}/student-snapshot", response_model=Snapshot)
+@router.get(
+    "/sessions/{session_id}/student-snapshot",
+    response_model=Snapshot,
+    response_model_exclude_none=True,
+)
 async def get_student_snapshot(
     session_id: str, db: Database, authorization: Authorization = None
 ) -> Snapshot:
@@ -581,7 +607,7 @@ async def get_teacher_snapshot(
 ) -> Snapshot:
     classroom = await require_session(db, session_id)
     require_teacher(classroom, authorization)
-    return await build_snapshot(db, classroom)
+    return await build_snapshot(db, classroom, include_teacher_insights=True)
 
 
 @router.get("/sessions/{session_id}/snapshot", response_model=Snapshot, deprecated=True)
@@ -600,7 +626,9 @@ async def get_snapshot(
         if participant is None or participant.session_id != session_id:
             raise HTTPException(status_code=403, detail="participant_not_in_session")
         require_student(participant, authorization)
-    return await build_snapshot(db, classroom, participant_id)
+    return await build_snapshot(
+        db, classroom, participant_id, include_teacher_insights=participant_id is None
+    )
 
 
 @router.post("/sessions/{session_id}/integrations/polyv/events")

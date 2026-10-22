@@ -35,6 +35,9 @@ if ($content -notmatch 'pointerdown' -or $content -notmatch 'setPointerCapture')
 if ($content -notmatch 'qp-disconnected' -or $content -notmatch 'fullscreenchange') {
     throw 'Extension must expose disconnected state and recover inside fullscreen pages.'
 }
+if ($content -notmatch 'ai_normalized_intent' -or $content -notmatch 'ai_semantic_reason') {
+    throw 'Extension must display auditable teacher-only AI semantic hints.'
+}
 $background = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $extensionRoot 'background.js')
 if ($background -notmatch 'chrome\.runtime\.onMessage' -or $background -notmatch '\bfetch\s*\(') {
     throw 'Extension background API bridge is missing.'

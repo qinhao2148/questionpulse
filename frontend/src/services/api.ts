@@ -64,6 +64,9 @@ export interface Cluster {
     still_confused_ratio: number
     check_error_ratio: number
   }
+  ai_normalized_intent: string | null
+  ai_semantic_reason: string | null
+  ai_model: string | null
   questions: Question[]
 }
 
