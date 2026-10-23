@@ -9,18 +9,55 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 const teacherTokenKey = (sessionId: string) => `questionpulse.teacher_token.${sessionId}`
 const joinCodeKey = (sessionId: string) => `questionpulse.join_code.${sessionId}`
 const studentTokenKey = (sessionId: string) => `questionpulse.student_token.${sessionId}`
+const studentParticipantKey = (sessionId: string) => `questionpulse.student_participant.${sessionId}`
+const teacherClassroomsKey = 'questionpulse.teacher_classrooms'
+const studentClassroomsKey = 'questionpulse.student_classrooms'
 
-export function saveTeacherAccess(sessionId: string, token: string, joinCode: string) {
+export interface LocalClassroomRecord {
+  id: string
+  title: string
+  join_code?: string
+  updated_at: string
+}
+
+function readRecords(key: string): LocalClassroomRecord[] {
+  try { return JSON.parse(localStorage.getItem(key) || '[]') as LocalClassroomRecord[] } catch { return [] }
+}
+
+function saveRecord(key: string, record: LocalClassroomRecord) {
+  const records = readRecords(key).filter((item) => item.id !== record.id)
+  localStorage.setItem(key, JSON.stringify([record, ...records].slice(0, 30)))
+}
+
+export const listTeacherClassrooms = () => readRecords(teacherClassroomsKey)
+export const listStudentClassrooms = () => readRecords(studentClassroomsKey)
+
+export function rememberTeacherClassroom(sessionId: string, title: string, joinCode?: string) {
+  saveRecord(teacherClassroomsKey, { id: sessionId, title, join_code: joinCode, updated_at: new Date().toISOString() })
+}
+
+export function rememberStudentClassroom(sessionId: string, title: string, joinCode?: string) {
+  saveRecord(studentClassroomsKey, { id: sessionId, title, join_code: joinCode, updated_at: new Date().toISOString() })
+}
+
+export function saveTeacherAccess(sessionId: string, token: string, joinCode: string, title = '课堂') {
   sessionStorage.setItem(teacherTokenKey(sessionId), token)
   sessionStorage.setItem(joinCodeKey(sessionId), joinCode)
+  localStorage.setItem(teacherTokenKey(sessionId), token)
+  localStorage.setItem(joinCodeKey(sessionId), joinCode)
+  rememberTeacherClassroom(sessionId, title, joinCode)
 }
 
 export function getJoinCode(sessionId: string) {
-  return sessionStorage.getItem(joinCodeKey(sessionId)) || ''
+  return sessionStorage.getItem(joinCodeKey(sessionId)) || localStorage.getItem(joinCodeKey(sessionId)) || ''
 }
 
 export function getTeacherToken(sessionId: string) {
-  return sessionStorage.getItem(teacherTokenKey(sessionId)) || ''
+  return sessionStorage.getItem(teacherTokenKey(sessionId)) || localStorage.getItem(teacherTokenKey(sessionId)) || ''
+}
+
+export function getStudentParticipant(sessionId: string) {
+  return localStorage.getItem(studentParticipantKey(sessionId)) || ''
 }
 
 function bearer(token: string | null): HeadersInit {
@@ -28,11 +65,11 @@ function bearer(token: string | null): HeadersInit {
 }
 
 function teacherHeaders(sessionId: string): HeadersInit {
-  return bearer(sessionStorage.getItem(teacherTokenKey(sessionId)))
+  return bearer(getTeacherToken(sessionId))
 }
 
 function studentHeaders(sessionId: string): HeadersInit {
-  return bearer(sessionStorage.getItem(studentTokenKey(sessionId)))
+  return bearer(sessionStorage.getItem(studentTokenKey(sessionId)) || localStorage.getItem(studentTokenKey(sessionId)))
 }
 
 export interface Question {
@@ -196,7 +233,7 @@ export async function createClassroom(title: string): Promise<{ id: string; join
   const result = await jsonRequest<{ data: { id: string; teacher_token: string; join_code: string } }>('/sessions', {
     method: 'POST', body: JSON.stringify({ title }),
   })
-  saveTeacherAccess(result.data.id, result.data.teacher_token, result.data.join_code)
+  saveTeacherAccess(result.data.id, result.data.teacher_token, result.data.join_code, title)
   return { id: result.data.id, join_code: result.data.join_code }
 }
 
@@ -206,6 +243,8 @@ export async function joinClassroom(sessionId: string, viewerKey: string, joinCo
     { method: 'POST', body: JSON.stringify({ viewer_key: viewerKey, join_code: joinCode || null }) },
   )
   sessionStorage.setItem(studentTokenKey(sessionId), result.data.access_token)
+  localStorage.setItem(studentTokenKey(sessionId), result.data.access_token)
+  localStorage.setItem(studentParticipantKey(sessionId), result.data.participant_id)
   return { participant_id: result.data.participant_id }
 }
 

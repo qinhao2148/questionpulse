@@ -6,7 +6,9 @@ import {
   answerCheck,
   fetchStudentChecks,
   fetchStudentSnapshot,
+  getStudentParticipant,
   joinClassroom,
+  rememberStudentClassroom,
   sendFeedback,
   submitQuestion,
   type Snapshot,
@@ -44,6 +46,7 @@ const active = computed(() => snapshot.value?.status === 'ended'
     (item) => item.questions.length > 0 && ['addressing', 'awaiting_feedback'].includes(item.status),
   ))
 const sessionEnded = computed(() => snapshot.value?.status === 'ended')
+const myClassroomTopics = computed(() => snapshot.value?.clusters.filter((item) => item.questions.length > 0) || [])
 const streamEnded = computed(() => polyvStatus.value === 'ended')
 const questionInputClosed = computed(() => sessionEnded.value || streamEnded.value)
 const stageBadgeLabel = computed(() => {
@@ -70,6 +73,11 @@ let refreshTimer: number | undefined
 async function refresh() {
   if (!participantId.value) return
   snapshot.value = await fetchStudentSnapshot(sessionId.value)
+  rememberStudentClassroom(
+    sessionId.value,
+    snapshot.value.title,
+    String(route.query.code || sessionStorage.getItem(`questionpulse.student_join_code.${sessionId.value}`) || ''),
+  )
   checks.value = sessionEnded.value ? [] : await fetchStudentChecks(sessionId.value)
   await nextTick()
   if (sessionEnded.value) {
@@ -141,9 +149,18 @@ async function connect() {
     }
     const joinCode = String(route.query.code || sessionStorage.getItem(`questionpulse.student_join_code.${sessionId.value}`) || '')
     if (joinCode) sessionStorage.setItem(`questionpulse.student_join_code.${sessionId.value}`, joinCode)
-    participantId.value = (await joinClassroom(sessionId.value, viewerKey, joinCode)).participant_id
+    participantId.value = getStudentParticipant(sessionId.value)
+    if (!participantId.value) {
+      participantId.value = (await joinClassroom(sessionId.value, viewerKey, joinCode)).participant_id
+    }
     await nextTick()
-    await refresh()
+    try {
+      await refresh()
+    } catch (error) {
+      if (!joinCode) throw error
+      participantId.value = (await joinClassroom(sessionId.value, viewerKey, joinCode)).participant_id
+      await refresh()
+    }
     refreshTimer = window.setInterval(refresh, 3000)
   } catch (error) {
     connectionError.value = error instanceof Error ? error.message : '无法连接课堂'
@@ -239,7 +256,7 @@ onUnmounted(() => {
     </section>
 
     <aside class="side-column">
-      <section class="surface ask-box">
+      <section v-if="!sessionEnded" class="surface ask-box">
         <p class="eyebrow">课堂提问</p>
         <h2>哪里还没听懂？</h2>
         <textarea v-model="question" :disabled="questionInputClosed" maxlength="500" :placeholder="sessionEnded ? '课堂已结束，无法继续提问' : streamEnded ? '直播已结束，无法继续提交新疑问' : '输入你的问题，例如：没有结束条件时会发生什么？'" />
@@ -247,6 +264,12 @@ onUnmounted(() => {
         <p class="mode-note">{{ connectionLabel }}</p>
         <p v-if="submitted" class="success-note">提交成功，你的问题正在与相似疑问一起整理。</p>
         <p v-if="connectionError" class="error-note">{{ connectionError }}</p>
+      </section>
+      <section v-else class="surface pulse-card student-review">
+        <p class="eyebrow">课堂回顾</p><h2>我的课堂记录</h2>
+        <div v-for="topic in myClassroomTopics" :key="topic.id" class="review-topic"><strong>{{ topic.title }}</strong><p v-for="item in topic.questions" :key="item.id">我的提问：{{ item.content }}</p><span v-if="topic.feedback.my_result">理解反馈：{{ topic.feedback.my_result === 'understood' ? '已理解' : '仍困惑' }}</span></div>
+        <p v-if="!myClassroomTopics.length">本堂课没有你的提问记录。</p>
+        <RouterLink class="button-link" to="/student">返回我的课堂</RouterLink>
       </section>
 
       <section v-if="active" class="surface pulse-card active-pulse">
@@ -267,7 +290,7 @@ onUnmounted(() => {
         </div>
         <p v-if="check.my_is_correct !== null" :class="check.my_is_correct ? 'success-note' : 'error-note'">{{ check.my_is_correct ? '回答正确，已经掌握。' : `暂未掌握，正确答案是 ${check.correct_option_key}。` }} {{ check.explanation }}</p>
       </section>
-      <section v-if="!active" class="surface pulse-card"><h3>{{ sessionEnded ? '课堂已结束' : '等待教师回应' }}</h3><p>{{ sessionEnded ? '感谢参与本次课堂互动。' : '你提出的问题进入讲解或反馈阶段后，会显示在这里。' }}</p></section>
+      <section v-if="!active && !sessionEnded" class="surface pulse-card"><h3>等待教师回应</h3><p>你提出的问题进入讲解或反馈阶段后，会显示在这里。</p></section>
     </aside>
   </main>
 </template>

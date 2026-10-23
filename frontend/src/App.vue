@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 
 const route = useRoute()
-const pageLabel = computed(() => route.path.startsWith('/student/')
+const pageLabel = computed(() => route.path === '/student' || route.path.startsWith('/student/')
   ? '学生课堂'
   : route.path.startsWith('/teacher/')
     ? '教师工作台'

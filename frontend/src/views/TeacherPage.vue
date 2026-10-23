@@ -13,6 +13,7 @@ import {
   generateCheck,
   getJoinCode,
   getTeacherToken,
+  rememberTeacherClassroom,
   saveTeacherAccess,
   retryQuestion,
   retryPendingQuestions,
@@ -99,6 +100,7 @@ async function refresh() {
     ;[snapshot.value, checks.value] = await Promise.all([
       fetchTeacherSnapshot(sessionId), fetchTeacherChecks(sessionId),
     ])
+    rememberTeacherClassroom(sessionId, snapshot.value.title, getJoinCode(sessionId))
     if (!selectedId.value && clusters.value.length) selectedId.value = clusters.value[0].id
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '无法读取课堂'
