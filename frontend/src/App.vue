@@ -8,12 +8,13 @@ const pageLabel = computed(() => route.path === '/student' || route.path.startsW
   : route.path.startsWith('/teacher/')
     ? '教师工作台'
     : route.path.startsWith('/report/') ? '课堂报告' : '课堂疑问助手')
+const homePath = computed(() => route.path === '/student' || route.path.startsWith('/student/') ? '/student' : '/')
 </script>
 
 <template>
   <div class="app-shell">
     <header class="topbar">
-      <RouterLink class="brand" to="/">QuestionPulse</RouterLink>
+      <RouterLink class="brand" :to="homePath">QuestionPulse</RouterLink>
       <span class="role-boundary">{{ pageLabel }}</span>
     </header>
     <RouterView />

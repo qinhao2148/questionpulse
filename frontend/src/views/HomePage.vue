@@ -31,7 +31,7 @@ onMounted(async () => {
 
 <template>
   <main class="workspace classroom-center">
-    <header class="center-heading"><div><p class="eyebrow">教师课堂中心</p><h1>我的课堂</h1><p>继续正在进行的课堂，或回顾已经结束的教学记录。</p></div><RouterLink class="button-link" to="/student">切换到学生入口</RouterLink></header>
+    <header class="center-heading"><div><p class="eyebrow">教师课堂中心</p><h1>我的课堂</h1><p>继续正在进行的课堂，或回顾已经结束的教学记录。</p></div></header>
     <section class="surface create-classroom-card">
       <div><h2>创建新课堂</h2><p>课堂之间相互独立，历史问题和报告会继续保留。</p></div>
       <label class="classroom-title-field"><span>课堂名称</span><input v-model="classroomTitle" maxlength="200" placeholder="例如：数据结构期中复习" /></label>
