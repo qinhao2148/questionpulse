@@ -56,6 +56,7 @@ onMounted(async () => {
       <button class="start-button" :disabled="state !== 'online' || creating || !classroomTitle.trim()" @click="startClassroom">
         {{ creating ? '正在创建…' : '创建课堂' }}
       </button>
+      <p class="entry-note">创建后会自动进入教师工作台；教师权限由专属入口自动保存，无需手动申请。</p>
       <p v-if="createError" class="error-note">{{ createError }}</p>
     </section>
     <aside class="panel">

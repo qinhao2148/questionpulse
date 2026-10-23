@@ -36,6 +36,7 @@ const integrationMessage = ref('')
 const ending = ref(false)
 const creatingNext = ref(false)
 const loading = ref(true)
+const missingTeacherAccess = ref(false)
 const copilotState = ref<'idle' | 'waiting' | 'connected' | 'unavailable'>('idle')
 let copilotRequestId = ''
 let copilotTimer: ReturnType<typeof window.setTimeout> | undefined
@@ -114,6 +115,13 @@ async function bootstrapTeacherAccess() {
     saveTeacherAccess(String(route.params.sessionId), access, code)
     await router.replace({ path: route.path })
   }
+  if (!getTeacherToken(String(route.params.sessionId))) {
+    missingTeacherAccess.value = true
+    loading.value = false
+    error.value = '教师页面需要从“创建课堂”流程或教师专属入口进入，无需另行申请权限。'
+    return
+  }
+  missingTeacherAccess.value = false
   await refresh()
 }
 
@@ -308,7 +316,8 @@ onBeforeUnmount(() => {
       <p class="eyebrow">教师工作台</p>
       <h1>{{ loading ? '正在加载课堂…' : '无法打开教师工作台' }}</h1>
       <p>{{ loading ? '正在读取课堂信息，请稍候。' : error || '请从教师专属入口重新进入课堂。' }}</p>
-      <button v-if="!loading" @click="refresh">重新加载</button>
+      <RouterLink v-if="missingTeacherAccess" class="button-link" to="/">返回首页创建课堂</RouterLink>
+      <button v-else-if="!loading" @click="refresh">重新加载</button>
     </section>
 
     <template v-else>
@@ -327,6 +336,7 @@ onBeforeUnmount(() => {
         <a :href="studentJoinUrl" target="_blank" rel="noreferrer">打开学生入口</a>
         <button type="button" :disabled="copilotState === 'waiting'" @click="connectCopilot">{{ copilotState === 'waiting' ? '正在连接…' : copilotState === 'connected' ? '开播助手已连接' : '连接开播助手' }}</button>
       </div>
+      <p v-if="copilotState === 'connected'" class="copilot-success">连接成功。开播页面右下角的 QP 助手会显示本课堂疑问。</p>
     </section>
 
     <section class="surface reliability-panel" :class="{ degraded: snapshot.integration_status === 'degraded' }">

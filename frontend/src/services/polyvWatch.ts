@@ -20,7 +20,7 @@ function mapLiveStatus(status: LiveStatus): { status: PolyvWatchStatus; detail: 
   if (status === LiveStatus.Playback) return { status: 'ended', detail: '直播已结束，回放正在生成' }
   if (status === LiveStatus.End) return { status: 'ended', detail: '主播已结束直播' }
   if (status === LiveStatus.Stop) return { status: 'waiting', detail: '直播暂时中断，等待主播恢复' }
-  return { status: 'waiting', detail: '等待主播开始直播' }
+  return { status: 'waiting', detail: '教师尚未开始直播，开播后画面会自动显示' }
 }
 
 export async function mountPolyvWatch(
