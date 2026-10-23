@@ -5,6 +5,8 @@ from pathlib import Path
 
 import httpx
 
+from app.core.config import get_settings
+
 QUESTIONS = [
     ("student-a", "递归为什么一定要有结束条件？"),
     ("student-b", "没有 base case 程序是不是停不下来？"),
@@ -17,7 +19,21 @@ QUESTIONS = [
 
 def seed(base_url: str) -> dict[str, object]:
     with httpx.Client(base_url=base_url, timeout=10) as client:
-        classroom = client.post("/sessions", json={"title": "QuestionPulse 演示课堂"})
+        settings = get_settings()
+        login = client.post(
+            "/teacher/login",
+            json={
+                "username": settings.teacher_username,
+                "password": settings.teacher_password,
+            },
+        )
+        login.raise_for_status()
+        portal_token = login.json()["data"]["access_token"]
+        classroom = client.post(
+            "/sessions",
+            headers={"Authorization": f"Bearer {portal_token}"},
+            json={"title": "QuestionPulse 演示课堂"},
+        )
         classroom.raise_for_status()
         access = classroom.json()["data"]
         session_id = access["id"]
@@ -60,9 +76,7 @@ def main() -> None:
         "session_id": session_id,
         "join_code": access["join_code"],
         "teacher_token": access["teacher_token"],
-        "student_url": (
-            f"http://127.0.0.1:5173/student/{session_id}?code={access['join_code']}"
-        ),
+        "student_url": "http://127.0.0.1:5173/student",
         "teacher_url": f"http://127.0.0.1:5173/teacher/{session_id}",
         "teacher_bootstrap_url": (
             f"http://127.0.0.1:5173/teacher/{session_id}"
