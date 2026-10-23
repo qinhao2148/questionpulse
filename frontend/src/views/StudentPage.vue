@@ -49,18 +49,18 @@ const questionInputClosed = computed(() => sessionEnded.value || streamEnded.val
 const stageBadgeLabel = computed(() => {
   if (sessionEnded.value) return '课堂已结束'
   if (streamEnded.value) return '直播已结束'
-  return polyvStatus.value === 'playing' ? 'POLYV LIVE' : '课堂直播'
+  return polyvStatus.value === 'playing' ? '直播中' : '课堂直播'
 })
 const connectionLabel = computed(() => {
-  if (sessionEnded.value) return '课堂记录已归档'
-  if (streamEnded.value) return 'POLYV 直播已结束，等待教师归档课堂'
-  if (snapshot.value?.integration_status === 'connected') return 'POLYV 真实问答数据已连接'
-  if (snapshot.value?.integration_status === 'degraded') return 'POLYV 问答同步暂时断开，疑问仍会安全保存'
+  if (sessionEnded.value) return '本次课堂互动已结束'
+  if (streamEnded.value) return '直播已结束，等待教师结束课堂'
+  if (snapshot.value?.integration_status === 'connected') return '课堂互动已连接'
+  if (snapshot.value?.integration_status === 'degraded') return '同步暂时中断，你的问题仍会保存'
   if (polyvStatus.value === 'playing' || polyvStatus.value === 'ready') {
-    return 'POLYV 直播已连接 · 问答数据等待教师同步'
+    return '直播与课堂互动已连接'
   }
   if (polyvStatus.value === 'waiting') return polyvStatusDetail.value
-  return '本地课堂模式'
+  return '课堂互动已连接'
 })
 const stageState = computed(() => sessionEnded.value
   ? 'ended'
@@ -104,7 +104,7 @@ async function ensurePolyvWatch(force = false) {
   playerStarted.value = true
   polyvConnected.value = false
   polyvStatus.value = 'loading'
-  polyvStatusDetail.value = `正在连接频道 ${channelId}`
+  polyvStatusDetail.value = '正在进入课堂直播…'
   try {
     await mountPolyvWatch(
       playerElement.value,
@@ -115,7 +115,7 @@ async function ensurePolyvWatch(force = false) {
     polyvConnected.value = true
   } catch (reason) {
     polyvStatus.value = 'degraded'
-    polyvStatusDetail.value = reason instanceof Error ? reason.message : '官方 SDK 初始化失败'
+    polyvStatusDetail.value = '直播暂时无法加载，请稍后重试'
     updatePolyvStatus('degraded', polyvStatusDetail.value)
   }
 }
@@ -171,9 +171,7 @@ async function sendQuestion() {
     if (polyvError) {
       polyvConnected.value = false
       polyvStatus.value = 'degraded'
-      polyvStatusDetail.value = polyvError instanceof Error
-        ? `POLYV 问答暂不可用，疑问已安全保存：${polyvError.message}`
-        : 'POLYV 问答暂不可用，疑问已安全保存'
+      polyvStatusDetail.value = '直播互动暂时无法同步，你的问题已保存'
     }
     submitted.value = true
     question.value = ''
@@ -227,10 +225,10 @@ onUnmounted(() => {
     <section class="watch-stage" :class="`is-${stageState}`">
       <div class="stage-badge" :class="{ ended: sessionEnded || streamEnded }"><span class="live-dot"></span> {{ stageBadgeLabel }}</div>
       <template v-if="sessionEnded">
-        <div class="stage-message"><p class="eyebrow">SESSION COMPLETE</p><h1>{{ snapshot?.title }}</h1><p>本课堂互动已结束，直播画面已关闭。课堂数据已归档。</p></div>
+        <div class="stage-message"><p class="eyebrow">课堂已结束</p><h1>{{ snapshot?.title }}</h1><p>本次课堂互动已结束，直播画面已关闭。</p></div>
       </template>
       <template v-else>
-        <div v-if="!playerStarted" class="stage-message"><p class="eyebrow">QUESTIONPULSE CLASSROOM</p><h1>{{ snapshot?.title || '课堂直播' }}</h1><p>{{ polyvStatusDetail }}</p></div>
+        <div v-if="!playerStarted" class="stage-message"><p class="eyebrow">正在上课</p><h1>{{ snapshot?.title || '课堂直播' }}</h1><p>{{ polyvStatusDetail }}</p></div>
         <div ref="playerElement" class="polyv-player"></div>
         <div v-if="playerStarted && polyvStatus !== 'playing'" class="player-state" :class="polyvStatus">
           <strong>{{ polyvStatusDetail }}</strong>
@@ -242,12 +240,12 @@ onUnmounted(() => {
 
     <aside class="side-column">
       <section class="surface ask-box">
-        <p class="eyebrow">QUESTION INPUT</p>
+        <p class="eyebrow">课堂提问</p>
         <h2>哪里还没听懂？</h2>
         <textarea v-model="question" :disabled="questionInputClosed" maxlength="500" :placeholder="sessionEnded ? '课堂已结束，无法继续提问' : streamEnded ? '直播已结束，无法继续提交新疑问' : '输入你的问题，例如：没有结束条件时会发生什么？'" />
         <div class="input-footer"><span>{{ question.length }}/500</span><button :disabled="!participantId || questionInputClosed" @click="sendQuestion">{{ sessionEnded ? '课堂已结束' : streamEnded ? '直播已结束' : '提交疑问' }}</button></div>
         <p class="mode-note">{{ connectionLabel }}</p>
-        <p v-if="submitted" class="success-note">已收到。{{ polyvConnected ? '问题已发送到 POLYV，等待教师端同步分析。' : '你的问题正在匹配相似疑问。' }}</p>
+        <p v-if="submitted" class="success-note">提交成功，你的问题正在与相似疑问一起整理。</p>
         <p v-if="connectionError" class="error-note">{{ connectionError }}</p>
       </section>
 
@@ -269,7 +267,7 @@ onUnmounted(() => {
         </div>
         <p v-if="check.my_is_correct !== null" :class="check.my_is_correct ? 'success-note' : 'error-note'">{{ check.my_is_correct ? '回答正确，已经掌握。' : `暂未掌握，正确答案是 ${check.correct_option_key}。` }} {{ check.explanation }}</p>
       </section>
-      <section v-if="!active" class="surface pulse-card"><h3>{{ sessionEnded ? '课堂已结束' : '等待教师讲解' }}</h3><p>{{ sessionEnded ? '课堂记录已冻结。教师可选择稍后发布脱敏课堂总结。' : '与你有关的课堂疑问会显示在这里。' }}</p></section>
+      <section v-if="!active" class="surface pulse-card"><h3>{{ sessionEnded ? '课堂已结束' : '等待教师回应' }}</h3><p>{{ sessionEnded ? '感谢参与本次课堂互动。' : '你提出的问题进入讲解或反馈阶段后，会显示在这里。' }}</p></section>
     </aside>
   </main>
 </template>

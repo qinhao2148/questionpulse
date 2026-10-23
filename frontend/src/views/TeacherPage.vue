@@ -35,6 +35,7 @@ const error = ref('')
 const integrationMessage = ref('')
 const ending = ref(false)
 const creatingNext = ref(false)
+const loading = ref(true)
 const copilotState = ref<'idle' | 'waiting' | 'connected' | 'unavailable'>('idle')
 let copilotRequestId = ''
 let copilotTimer: ReturnType<typeof window.setTimeout> | undefined
@@ -44,6 +45,7 @@ const selectedCheck = computed(() => checks.value.find((item) => item.cluster_id
 const participantTotal = computed(() => new Set(
   clusters.value.flatMap((cluster) => cluster.questions.map((question) => question.participant_id)),
 ).size)
+const activeClusterTotal = computed(() => clusters.value.filter((item) => item.status !== 'closed').length)
 const joinCode = computed(() => getJoinCode(String(route.params.sessionId)))
 const studentJoinUrl = computed(() => `${window.location.origin}/student/${route.params.sessionId}?code=${encodeURIComponent(joinCode.value)}`)
 
@@ -90,6 +92,7 @@ function connectCopilot() {
 }
 
 async function refresh() {
+  error.value = ''
   try {
     const sessionId = String(route.params.sessionId)
     ;[snapshot.value, checks.value] = await Promise.all([
@@ -98,6 +101,8 @@ async function refresh() {
     if (!selectedId.value && clusters.value.length) selectedId.value = clusters.value[0].id
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '无法读取课堂'
+  } finally {
+    loading.value = false
   }
 }
 
@@ -134,11 +139,12 @@ async function retry(questionId: string) {
 }
 
 async function finishClassroom() {
+  if (!window.confirm('结束课堂后，学生将无法继续观看和提问，课堂数据会转为只读。确定结束吗？')) return
   error.value = ''
   ending.value = true
   try {
     await endClassroom(String(route.params.sessionId))
-    integrationMessage.value = '课堂记录已归档；学生端已停止显示直播。保利威推流需在开播控制台结束。'
+    integrationMessage.value = '课堂已结束，学生端已停止播放和提问。请同时在开播页面结束直播。'
     await refresh()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '结束课堂失败'
@@ -229,6 +235,9 @@ const actionLabel: Record<string, string> = {
 const statusLabel: Record<string, string> = {
   open: '待处理', addressing: '讲解中', awaiting_feedback: '等待反馈', closed: '已关闭',
 }
+const sourceLabel: Record<string, string> = {
+  student: '课堂页面', local: '课堂页面', polyv_qa: '直播提问', polyv: '直播提问',
+}
 
 async function advance(cluster: Cluster) {
   error.value = ''
@@ -295,33 +304,40 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="workspace teacher-page">
+    <section v-if="!snapshot" class="surface page-state">
+      <p class="eyebrow">教师工作台</p>
+      <h1>{{ loading ? '正在加载课堂…' : '无法打开教师工作台' }}</h1>
+      <p>{{ loading ? '正在读取课堂信息，请稍候。' : error || '请从教师专属入口重新进入课堂。' }}</p>
+      <button v-if="!loading" @click="refresh">重新加载</button>
+    </section>
+
+    <template v-else>
     <header class="page-heading">
-      <div><p class="eyebrow">LIVE QUESTION RADAR</p><h1>课堂疑问脉搏</h1><p>{{ snapshot?.status === 'ended' ? '课堂已归档 · 数据只读' : `${snapshot?.mode === 'demo' ? '本地演示模式' : snapshot?.mode} · ${snapshot?.integration_status === 'not_configured' ? 'POLYV 待配置' : snapshot?.integration_status === 'contract_verified' ? 'POLYV 契约已验证（未连接真实账号）' : snapshot?.integration_status === 'degraded' ? 'POLYV 接入已降级' : snapshot?.integration_status}` }}</p></div>
-      <div class="connection"><span class="live-dot"></span><div><strong>{{ snapshot?.status === 'ended' ? '课堂记录已归档' : error ? '接入需要处理' : snapshot?.integration_status === 'connected' ? 'POLYV 真实数据已连接' : '本地数据已连接' }}</strong><small>{{ error || integrationMessage || (snapshot?.status === 'ended' ? '报告已冻结，可创建下一堂课' : '点击刷新读取最新问题') }}</small></div><button @click="refresh">刷新</button><RouterLink class="button-link" :to="`/report/${route.params.sessionId}`">教师报告</RouterLink><button v-if="snapshot?.status !== 'ended'" @click="syncPolyv">同步 POLYV 问答</button><button v-if="snapshot?.status !== 'ended'" @click="verifyContract">验证契约</button><button v-if="snapshot?.status !== 'ended'" class="danger-action" :disabled="ending" @click="finishClassroom">{{ ending ? '正在结束…' : '结束课堂记录' }}</button><button v-else class="primary-action" :disabled="creatingNext" @click="createNextClassroom">{{ creatingNext ? '正在创建…' : '创建下一堂课' }}</button></div>
+      <div><p class="eyebrow">教师工作台</p><h1>{{ snapshot.title }}</h1><p>{{ snapshot.status === 'ended' ? '课堂已结束 · 数据只读' : '实时汇总学生疑问与理解反馈' }}</p></div>
+      <div class="connection"><span class="live-dot"></span><div><strong>{{ snapshot.status === 'ended' ? '课堂已结束' : error ? '部分功能需要处理' : snapshot.integration_status === 'degraded' ? '互动同步暂时中断' : '课堂数据已连接' }}</strong><small>{{ error || integrationMessage || (snapshot.status === 'ended' ? '可查看报告或创建下一堂课' : '新问题会自动出现在下方') }}</small></div><button @click="refresh">刷新</button><RouterLink class="button-link" :to="`/report/${route.params.sessionId}`">查看报告</RouterLink><button v-if="snapshot.status !== 'ended'" @click="syncPolyv">同步最新提问</button><button v-if="snapshot.status !== 'ended'" class="danger-action" :disabled="ending" @click="finishClassroom">{{ ending ? '正在结束…' : '结束课堂' }}</button><button v-else class="primary-action" :disabled="creatingNext" @click="createNextClassroom">{{ creatingNext ? '正在创建…' : '创建下一堂课' }}</button></div>
     </header>
 
     <section v-if="snapshot?.status === 'ended'" class="surface session-ended-notice">
-      <div><p class="eyebrow">SESSION ARCHIVED</p><strong>这堂课已结束，数据保持只读</strong><small>QuestionPulse 已关闭学生端直播与提问。保利威主播控制台是独立推流端，如仍在推流，请在该控制台点击“结束直播”。</small></div>
+      <div><p class="eyebrow">课堂已结束</p><strong>本堂课的数据已保存</strong><small>学生端已经停止播放和提问。如开播页面仍在推流，请回到开播页面点击“结束直播”。</small></div>
     </section>
 
     <section v-if="snapshot?.status !== 'ended' && joinCode" class="surface classroom-access-panel">
-      <div><p class="eyebrow">STUDENT ACCESS</p><strong>学生课堂码 {{ joinCode }}</strong><small>分享学生链接即可加入；学生端不会显示教师控制与完整报告入口。</small></div>
+      <div><p class="eyebrow">学生入口</p><strong>课堂码 {{ joinCode }}</strong><small>将学生入口或课堂码发给学生，即可加入本堂课。</small></div>
       <div class="classroom-access-actions">
         <a :href="studentJoinUrl" target="_blank" rel="noreferrer">打开学生入口</a>
         <button type="button" :disabled="copilotState === 'waiting'" @click="connectCopilot">{{ copilotState === 'waiting' ? '正在连接…' : copilotState === 'connected' ? '开播助手已连接' : '连接开播助手' }}</button>
       </div>
     </section>
 
-    <section class="surface reliability-panel" :class="{ degraded: snapshot?.integration_status === 'degraded' }">
-      <div><p class="eyebrow">RELIABILITY</p><strong>{{ snapshot?.integration_status === 'degraded' ? '接入已降级，课堂本地闭环仍可使用' : snapshot?.integration_status === 'connected' ? '真实 POLYV API 已连接' : '演示保护已启用' }}</strong><small v-if="snapshot?.integration_error">{{ snapshot.integration_error }}</small><small v-else-if="snapshot?.integration_status === 'connected'">频道 {{ snapshot.polyv_channel_id }} · 最近同步 {{ snapshot.last_synced_at }}</small><small v-else>可先验证契约，配置密钥后执行真实同步</small></div>
-      <div v-if="snapshot?.status !== 'ended'" class="reliability-actions"><button v-if="snapshot?.integration_status !== 'degraded'" @click="drill('degrade')">模拟接入断连</button><button v-else @click="drill('recover')">恢复接入状态</button></div>
+    <section class="surface reliability-panel" :class="{ degraded: snapshot.integration_status === 'degraded' }">
+      <div><p class="eyebrow">互动状态</p><strong>{{ snapshot.integration_status === 'degraded' ? '同步暂时中断，课堂提问仍可使用' : snapshot.integration_status === 'connected' ? '直播互动已连接' : '课堂提问已就绪' }}</strong><small v-if="snapshot.integration_status === 'connected'">最近同步 {{ snapshot.last_synced_at ? new Date(snapshot.last_synced_at).toLocaleTimeString('zh-CN') : '尚无' }}</small><small v-else>学生提交的问题会保存在本课堂中</small></div>
     </section>
 
     <section class="metrics-grid">
-      <article><span>提问学生计数</span><strong>{{ participantTotal }}</strong><small>按疑问簇实时汇总</small></article>
-      <article><span>疑问簇</span><strong>{{ clusters.length }}</strong><small>{{ snapshot?.pending_questions.length || 0 }} 条待处理</small></article>
-      <article><span>问题总数</span><strong>{{ clusters.reduce((sum, item) => sum + item.question_count, 0) }}</strong><small>幂等提交已启用</small></article>
-      <article class="pulse-viz"><span>实时疑问强度</span><div class="bars"><i v-for="height in [24,36,28,54,76,48,88,62,40,30]" :key="height" :style="{ height: `${height}%` }"></i></div></article>
+      <article><span>提问学生</span><strong>{{ participantTotal }}</strong><small>按独立学生统计</small></article>
+      <article><span>疑问主题</span><strong>{{ clusters.length }}</strong><small>相似问题自动汇总</small></article>
+      <article><span>问题总数</span><strong>{{ clusters.reduce((sum, item) => sum + item.question_count, 0) }}</strong><small>已自动过滤重复提交</small></article>
+      <article><span>仍需关注</span><strong>{{ activeClusterTotal }}</strong><small>{{ snapshot.pending_questions.length }} 条问题等待重新处理</small></article>
     </section>
 
     <div class="dashboard-grid">
@@ -336,7 +352,7 @@ onBeforeUnmount(() => {
       </section>
 
       <aside v-if="selected" class="surface detail-panel">
-        <p class="eyebrow">CLUSTER DETAIL</p><h2>{{ selected.title }}</h2>
+        <p class="eyebrow">主题详情</p><h2>{{ selected.title }}</h2>
         <div class="impact-number"><strong>{{ selected.participant_count }}</strong><span>名独立学生受到影响</span></div>
         <details class="confusion-detail"><summary>困惑指数 {{ selected.confusion_score }} 的计算依据</summary><div><span>参与学生比例 {{ Math.round(selected.confusion_breakdown.participant_ratio * 100) }}%</span><span>最近问题强度 {{ Math.round(selected.confusion_breakdown.recent_activity * 100) }}%</span><span>等待压力 {{ Math.round(selected.confusion_breakdown.wait_pressure * 100) }}%</span><span>仍困惑比例 {{ Math.round(selected.confusion_breakdown.still_confused_ratio * 100) }}%</span><span>检测错误率 {{ Math.round(selected.confusion_breakdown.check_error_ratio * 100) }}%</span></div></details>
         <div v-if="selected.feedback.targets" class="feedback-summary">
@@ -345,9 +361,10 @@ onBeforeUnmount(() => {
           <span class="warn-text">仍困惑 {{ selected.feedback.still_confused }}</span>
         </div>
         <h3>原始表达</h3>
-        <ul class="question-list"><li v-for="question in selected.questions" :key="question.id"><span>{{ question.content }} <small>· {{ question.source }}{{ question.external_id ? ` / ${question.external_id}` : '' }} · {{ question.assignment_method }}</small></span><button :disabled="snapshot?.status === 'ended' || selected.questions.length < 2" @click="detach(question.id)">拆分此题</button></li></ul>
+        <ul class="question-list"><li v-for="question in selected.questions" :key="question.id"><span>{{ question.content }} <small>来自{{ sourceLabel[question.source] || '课堂提问' }}</small></span><button :disabled="snapshot.status === 'ended' || selected.questions.length < 2" @click="detach(question.id)">移出当前主题</button></li></ul>
         <div v-if="snapshot?.status !== 'ended'" class="action-stack">
-          <button class="primary-action" @click="advance(selected)">{{ actionLabel[selected.status] }}</button>
+          <button class="primary-action" :disabled="selected.status === 'awaiting_feedback' && selectedCheck?.status === 'active'" @click="advance(selected)">{{ actionLabel[selected.status] }}</button>
+          <p v-if="selected.status === 'awaiting_feedback' && selectedCheck?.status === 'active'" class="mode-note">请先结束正在进行的理解检测，再关闭这个疑问。</p>
         </div>
         <section v-if="selected.feedback_round > 0" class="check-teacher-panel">
           <div class="card-row"><h3>理解检测</h3><span v-if="selectedCheck">{{ selectedCheck.status === 'draft' ? '待审核' : selectedCheck.status === 'active' ? '答题中' : '已关闭' }}</span></div>
@@ -356,17 +373,23 @@ onBeforeUnmount(() => {
             <ol class="check-review-options"><li v-for="option in selectedCheck.options" :key="option.key" :class="{ correct: option.key === selectedCheck.correct_option_key }">{{ option.key }}. {{ option.content }}</li></ol>
             <p class="mode-note">正确答案 {{ selectedCheck.correct_option_key }} · {{ selectedCheck.explanation }}</p>
             <p v-if="selectedCheck.status !== 'draft'">作答 {{ selectedCheck.response_count }}/{{ selectedCheck.target_count }} · 正确 {{ selectedCheck.correct_count }}</p>
-            <button v-if="selectedCheck.status === 'draft'" :disabled="checkBusy" @click="publishCheck">审核通过并定向发布</button>
+            <button v-if="selectedCheck.status === 'draft'" :disabled="checkBusy" @click="publishCheck">确认并发布给相关学生</button>
             <button v-else-if="selectedCheck.status === 'active'" :disabled="checkBusy" @click="finishCheck">结束检测</button>
           </template>
-          <button v-else-if="selected.status === 'awaiting_feedback'" :disabled="checkBusy" @click="createCheck">生成检测草稿</button>
+          <button v-else-if="selected.status === 'awaiting_feedback'" :disabled="checkBusy" @click="createCheck">生成理解检测题</button>
           <p v-else-if="!selectedCheck" class="mode-note">结束本轮讲解并进入反馈阶段后，可生成一道检测题。</p>
         </section>
       </aside>
     </div>
     <section v-if="snapshot?.status !== 'ended' && snapshot?.pending_questions.length" class="surface pending-panel">
-      <div class="pending-heading"><div><p class="eyebrow">RETRY QUEUE</p><h2>待处理问题</h2></div><button @click="retryAll">全部重试</button></div>
+      <div class="pending-heading"><div><p class="eyebrow">需要处理</p><h2>暂未完成分析的问题</h2></div><button @click="retryAll">重新分析全部</button></div>
       <div v-for="item in snapshot.pending_questions" :key="item.id" class="pending-row"><span>{{ item.content }}</span><button @click="retry(item.id)">重新处理</button></div>
     </section>
+    <details v-if="snapshot.status !== 'ended'" class="diagnostic-panel">
+      <summary>接入诊断</summary>
+      <p>仅在接入配置或现场验收时使用。</p>
+      <div class="reliability-actions"><button @click="verifyContract">检查数据接入</button><button v-if="snapshot.integration_status !== 'degraded'" @click="drill('degrade')">测试断线保护</button><button v-else @click="drill('recover')">恢复连接状态</button></div>
+    </details>
+    </template>
   </main>
 </template>

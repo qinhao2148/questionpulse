@@ -172,11 +172,14 @@ async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
       cannot_detach_only_question: '疑问簇只有一条问题，无法继续拆分',
       question_not_pending: '该问题当前无需重试', version_conflict: '数据已更新，请刷新后重试',
       check_already_answered: '本题已经提交，答案不能再次修改',
-      polyv_credentials_not_configured: 'POLYV App ID 或 App Secret 尚未配置',
-      polyv_channel_not_configured: '尚未配置 POLYV 测试频道号',
-      polyv_api_unavailable: 'POLYV API 调用失败，请查看接入状态后重试',
+      polyv_credentials_not_configured: '直播平台授权信息尚未配置',
+      polyv_channel_not_configured: '尚未配置直播频道',
+      polyv_api_unavailable: '直播互动暂时无法同步，请稍后重试',
     }
-    throw new Error(labels[body?.detail || ''] || body?.detail || `请求失败：${response.status}`)
+    const knownMessage = labels[body?.detail || '']
+    if (knownMessage) throw new Error(knownMessage)
+    if (response.status >= 500) throw new Error('课堂服务暂时不可用，请稍后重试')
+    throw new Error(body?.detail || '请求未完成，请检查入口后重试')
   }
   return response.json() as Promise<T>
 }
