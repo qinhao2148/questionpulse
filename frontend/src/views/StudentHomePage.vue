@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { joinClassroomByCode, listStudentClassrooms } from '../services/api'
 
-const router = useRouter()
 const joinCode = ref('')
 const displayName = ref(localStorage.getItem('questionpulse.student_display_name') || '')
 const error = ref('')
@@ -19,7 +17,20 @@ async function enterClassroom() {
     const name = displayName.value.trim()
     localStorage.setItem('questionpulse.student_display_name', name)
     const classroom = await joinClassroomByCode(joinCode.value.trim().toUpperCase(), name, viewerKey)
-    await router.push(`/student/${classroom.session_id}`)
+    if (!classroom.polyv_channel_id) throw new Error('课堂尚未绑定 POLYV 频道')
+    const watchBase = import.meta.env.VITE_POLYV_WATCH_BASE_URL || 'http://127.0.0.1:15021/index.html'
+    const query = new URLSearchParams({
+      channelId: classroom.polyv_channel_id,
+      viewerid: classroom.polyv_viewer_id,
+      nickname: name,
+      qpSessionId: classroom.session_id,
+      qpApiBase: import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1',
+    })
+    const handoff = new URLSearchParams({
+      token: classroom.access_token,
+      participantId: classroom.participant_id,
+    })
+    window.location.assign(`${watchBase}?${query.toString()}#${handoff.toString()}`)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '加入课堂失败'
   } finally {

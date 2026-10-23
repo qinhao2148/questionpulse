@@ -3,7 +3,7 @@ import json
 import httpx
 from pydantic import ValidationError
 
-from app.ai.schemas import ClusterCandidate, QuizDraft, SemanticDecision
+from app.ai.schemas import ChatQuestionDecision, ClusterCandidate, QuizDraft, SemanticDecision
 
 
 class DeepSeekError(RuntimeError):
@@ -75,6 +75,73 @@ class DeepSeekAnalyzer:
             payload = response.json()
             content = payload["choices"][0]["message"]["content"]
             decision = SemanticDecision.model_validate(json.loads(content))
+            usage = payload.get("usage") or {}
+            return decision, {
+                "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+                "completion_tokens": int(usage.get("completion_tokens") or 0),
+            }
+        except (
+            httpx.HTTPError,
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError,
+            ValidationError,
+        ) as exc:
+            raise DeepSeekError(type(exc).__name__) from exc
+
+    async def classify_chat_message(
+        self, classroom_title: str, content: str, recent_context: list[str] | None = None
+    ) -> tuple[ChatQuestionDecision, dict[str, int]]:
+        if not self.api_key:
+            raise DeepSeekError("deepseek_not_configured")
+        prompt = {
+            "classroom_title": classroom_title,
+            "chat_message": content,
+            "recent_context": (recent_context or [])[-8:],
+            "instructions": (
+                "判断聊天是否表达课程知识疑问。没有问号但表达没听懂、请求重讲、"
+                "描述课程相关错误也算疑问；寒暄、刷屏、设备声音和网络问题不算知识疑问。"
+                "question_type 取 concept_confusion、procedure_question、error_question、"
+                "clarification、request_repeat、classroom_operation、social、irrelevant 之一。"
+                "只返回 json。"
+            ),
+            "json_example": {
+                "is_question": True,
+                "confidence": 0.92,
+                "question_type": "concept_confusion",
+                "normalized_intent": "询问递归终止条件",
+                "suggested_question": "递归为什么必须设置终止条件？",
+                "reason": "学生明确表达对课程概念的不理解",
+            },
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json={
+                        "model": self.model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "你是课堂聊天疑问识别器。不要回答问题，不计算人数，"
+                                    "只输出符合字段约束的 json 对象。"
+                                ),
+                            },
+                            {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "max_tokens": min(self.max_output_tokens, 700),
+                        "temperature": 0.1,
+                    },
+                )
+            response.raise_for_status()
+            payload = response.json()
+            decision = ChatQuestionDecision.model_validate_json(
+                payload["choices"][0]["message"]["content"]
+            )
             usage = payload.get("usage") or {}
             return decision, {
                 "prompt_tokens": int(usage.get("prompt_tokens") or 0),

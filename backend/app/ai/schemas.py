@@ -41,3 +41,12 @@ class QuizDraft(BaseModel):
         if len(set(keys)) != 4 or self.correct_option_key not in keys:
             raise ValueError("quiz options must contain unique A-D keys")
         return self
+
+
+class ChatQuestionDecision(BaseModel):
+    is_question: bool
+    confidence: float = Field(ge=0, le=1)
+    question_type: str = Field(min_length=1, max_length=40)
+    normalized_intent: str = Field(min_length=1, max_length=240)
+    suggested_question: str | None = Field(default=None, max_length=500)
+    reason: str = Field(min_length=1, max_length=500)

@@ -210,6 +210,16 @@ export interface TeacherClassroomSummary {
   ended_at: string | null
 }
 
+export interface ChatReviewItem {
+  id: string
+  content: string
+  confidence: number
+  normalized_intent: string
+  suggested_question: string | null
+  reason: string
+  occurred_at: string
+}
+
 async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
@@ -288,7 +298,7 @@ export function fetchTeacherClassrooms(): Promise<TeacherClassroomSummary[]> {
 }
 
 export async function joinClassroomByCode(joinCode: string, displayName: string, viewerKey: string) {
-  const result = await jsonRequest<{ data: { session_id: string; session_title: string; participant_id: string; access_token: string; join_code: string } }>(
+  const result = await jsonRequest<{ data: { session_id: string; session_title: string; participant_id: string; access_token: string; join_code: string; polyv_channel_id: string | null; polyv_session_id: string | null; polyv_viewer_id: string } }>(
     '/student/join',
     { method: 'POST', body: JSON.stringify({ join_code: joinCode, display_name: displayName, viewer_key: viewerKey }) },
   )
@@ -339,6 +349,18 @@ export function fetchStudentChecks(sessionId: string): Promise<CheckQuestion[]> 
 export function fetchTeacherChecks(sessionId: string): Promise<CheckQuestion[]> {
   return jsonRequest<CheckQuestion[]>(`/sessions/${sessionId}/checks`, {
     headers: teacherHeaders(sessionId),
+  })
+}
+
+export function fetchChatReviewQueue(sessionId: string): Promise<ChatReviewItem[]> {
+  return jsonRequest<{ data: ChatReviewItem[] }>(`/sessions/${sessionId}/chat-messages/review`, {
+    headers: teacherHeaders(sessionId),
+  }).then((result) => result.data)
+}
+
+export function reviewChatMessage(sessionId: string, messageId: string, action: 'promote' | 'ignore') {
+  return jsonRequest(`/sessions/${sessionId}/chat-messages/${messageId}/review`, {
+    method: 'POST', headers: teacherHeaders(sessionId), body: JSON.stringify({ action }),
   })
 }
 
@@ -420,6 +442,13 @@ export async function runIntegrationDrill(sessionId: string, action: 'degrade' |
 export async function syncPolyvQuestions(sessionId: string) {
   return jsonRequest<{ data: { accepted: number; duplicates: number; fetched: number; integration_status: string } }>(
     `/sessions/${sessionId}/integrations/polyv/sync`,
+    { method: 'POST', headers: teacherHeaders(sessionId), body: '{}' },
+  )
+}
+
+export async function syncPolyvChatMessages(sessionId: string) {
+  return jsonRequest<{ data: { accepted: number; duplicates: number; fetched: number; integration_status: string } }>(
+    `/sessions/${sessionId}/integrations/polyv/chat/sync`,
     { method: 'POST', headers: teacherHeaders(sessionId), body: '{}' },
   )
 }

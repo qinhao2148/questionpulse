@@ -16,6 +16,7 @@
     </template>
 
     <theme-select v-if="watchAppInited && paramGetter().debugSkin()" />
+    <questionpulse-panel />
   </div>
 </template>
 
@@ -30,6 +31,7 @@ import { storeDefinitionToRefs } from '@/plugins/pinia/util';
 import DirectBusinessPageEntry from './layout/direct-business-page/direct-business-page-entry.vue';
 import { useGlobalInject } from './use-global-inject';
 import { useQueryParams } from '@/hooks/core/use-query-params';
+import QuestionpulsePanel from '@/questionpulse/questionpulse-panel.vue';
 
 const { uniqueId } = useGlobalInject();
 const { paramGetter } = useQueryParams();

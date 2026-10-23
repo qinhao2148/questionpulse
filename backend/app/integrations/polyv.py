@@ -26,6 +26,7 @@ def build_sign(params: dict[str, Any], app_secret: str) -> str:
 class PolyvQuestionAdapter:
     qa_endpoint = "https://api.polyv.net/live/v4/chat/list-qa"
     legacy_ask_endpoint = "https://api.polyv.net/live/v2/chat/{channel_id}/getQuestion"
+    chat_history_endpoint = "https://api.polyv.net/live/v3/channel/chat/get-history-page"
 
     def __init__(
         self,
@@ -47,7 +48,7 @@ class PolyvQuestionAdapter:
     @staticmethod
     def normalize_event(payload: dict[str, Any]) -> NormalizedQuestion:
         occurred_at = payload.get("occurred_at") or payload.get("createdAt")
-        timestamp = payload.get("createTime") or payload.get("timestamp")
+        timestamp = payload.get("createTime") or payload.get("timestamp") or payload.get("time")
         if isinstance(occurred_at, str):
             occurred_at = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
         elif timestamp is not None:
@@ -138,3 +139,49 @@ class PolyvQuestionAdapter:
             if item.get("content") and item.get("event") == "S_QUESTION"
         )
         return normalized
+
+    async def fetch_chat_messages(
+        self,
+        channel_id: str,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        page_size: int = 1000,
+        max_pages: int = 5,
+    ) -> list[NormalizedQuestion]:
+        """Fetch public, text-only learner messages for server-side reconciliation."""
+        if not self.configured:
+            raise PolyvNotConfiguredError("POLYV credentials are not configured")
+        owns_client = self.client is None
+        client = self.client or httpx.AsyncClient(timeout=self.timeout)
+        messages: list[NormalizedQuestion] = []
+        try:
+            for page in range(1, max_pages + 1):
+                body = await self._signed_get(
+                    client,
+                    self.chat_history_endpoint,
+                    {
+                        "channelId": channel_id,
+                        "startDay": start_at.strftime("%Y-%m-%d %H:%M:%S"),
+                        "endDay": end_at.strftime("%Y-%m-%d %H:%M:%S"),
+                        "page": page,
+                        "pageSize": page_size,
+                        "userType": "slice,viewer,attendee,student",
+                        "status": "pass",
+                        "hasTotal": "N",
+                    },
+                )
+                contents = (body.get("data") or {}).get("contents") or []
+                messages.extend(
+                    self.normalize_event({**item, "source": "polyv_chat"})
+                    for item in contents
+                    if item.get("content")
+                    and not item.get("msgType")
+                    and item.get("sourceType", "public") == "public"
+                )
+                if len(contents) < page_size:
+                    break
+        finally:
+            if owns_client:
+                await client.aclose()
+        return messages

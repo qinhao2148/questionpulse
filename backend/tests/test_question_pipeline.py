@@ -1046,3 +1046,41 @@ def test_teacher_login_lists_all_classroom_history() -> None:
     assert student_entry.status_code == 200
     assert student_entry.json()["data"]["session_id"] == second["id"]
     app.dependency_overrides.clear()
+
+
+def test_polyv_chat_is_classified_promoted_and_idempotent() -> None:
+    asyncio.run(reset_database())
+    app.dependency_overrides[get_db] = override_db
+    client = RoleAwareTestClient(app)
+    classroom = client.post("/api/v1/sessions", json={"title": "递归课"}).json()["data"]
+    session_id = classroom["id"]
+    student = client.post(
+        f"/api/v1/sessions/{session_id}/join",
+        json={"viewer_key": "chat-student", "display_name": "小明"},
+    ).json()["data"]
+    headers = {"Authorization": f"Bearer {student['access_token']}"}
+    payload = {
+        "external_id": "polyv-chat-1",
+        "content": "老师，递归为什么一定要有结束条件？",
+        "occurred_at": datetime.now(UTC).isoformat(),
+    }
+
+    first = client.post(
+        f"/api/v1/sessions/{session_id}/chat-messages", headers=headers, json=payload
+    )
+    assert first.status_code == 202
+    assert first.json()["data"]["status"] == "promoted"
+    repeated = client.post(
+        f"/api/v1/sessions/{session_id}/chat-messages", headers=headers, json=payload
+    )
+    assert repeated.status_code == 202
+    assert repeated.json()["data"]["id"] == first.json()["data"]["id"]
+
+    snapshot = client.get(
+        f"/api/v1/sessions/{session_id}/student-snapshot", headers=headers
+    ).json()
+    questions = [question for cluster in snapshot["clusters"] for question in cluster["questions"]]
+    assert len(questions) == 1
+    assert questions[0]["source"] == "polyv_chat"
+    assert questions[0]["external_id"] == "polyv-chat-1"
+    app.dependency_overrides.clear()

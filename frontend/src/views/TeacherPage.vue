@@ -10,18 +10,22 @@ import {
   endClassroom,
   fetchTeacherSnapshot,
   fetchTeacherChecks,
+  fetchChatReviewQueue,
   generateCheck,
   getTeacherAccessToken,
   hasTeacherAccess,
   retryQuestion,
   retryPendingQuestions,
+  reviewChatMessage,
   runIntegrationDrill,
+  syncPolyvChatMessages,
   syncPolyvQuestions,
   updateClusterStatus,
   updateJoinCode,
   verifyPolyvContract,
   type Cluster,
   type CheckQuestion,
+  type ChatReviewItem,
   type Snapshot,
   TEACHER_LOGIN_REQUIRED_MESSAGE,
 } from '../services/api'
@@ -30,6 +34,7 @@ const route = useRoute()
 const router = useRouter()
 const snapshot = ref<Snapshot | null>(null)
 const checks = ref<CheckQuestion[]>([])
+const chatReviewQueue = ref<ChatReviewItem[]>([])
 const checkBusy = ref(false)
 const selectedId = ref('')
 const error = ref('')
@@ -110,8 +115,8 @@ async function refresh() {
   error.value = ''
   try {
     const sessionId = String(route.params.sessionId)
-    ;[snapshot.value, checks.value] = await Promise.all([
-      fetchTeacherSnapshot(sessionId), fetchTeacherChecks(sessionId),
+    ;[snapshot.value, checks.value, chatReviewQueue.value] = await Promise.all([
+      fetchTeacherSnapshot(sessionId), fetchTeacherChecks(sessionId), fetchChatReviewQueue(sessionId),
     ])
     joinCodeDraft.value = snapshot.value.join_code || ''
     if (!selectedId.value && clusters.value.length) selectedId.value = clusters.value[0].id
@@ -221,8 +226,10 @@ async function syncPolyv() {
   error.value = ''
   integrationMessage.value = ''
   try {
-    const result = await syncPolyvQuestions(String(route.params.sessionId))
-    integrationMessage.value = `真实同步完成：读取 ${result.data.fetched} 条，新增 ${result.data.accepted} 条，去重 ${result.data.duplicates} 条`
+    const sessionId = String(route.params.sessionId)
+    const chat = await syncPolyvChatMessages(sessionId)
+    const questions = await syncPolyvQuestions(sessionId)
+    integrationMessage.value = `真实同步完成：聊天新增 ${chat.data.accepted} 条、去重 ${chat.data.duplicates} 条；提问新增 ${questions.data.accepted} 条、去重 ${questions.data.duplicates} 条`
     await refresh()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '真实同步失败'
@@ -254,6 +261,17 @@ async function retryAll() {
   }
 }
 
+async function decideChat(item: ChatReviewItem, action: 'promote' | 'ignore') {
+  error.value = ''
+  try {
+    await reviewChatMessage(String(route.params.sessionId), item.id, action)
+    integrationMessage.value = action === 'promote' ? '聊天已收录为疑问并进入聚类。' : '聊天已标记为普通消息。'
+    await refresh()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '聊天审核失败'
+  }
+}
+
 const nextStatus: Record<string, string> = {
   open: 'addressing',
   addressing: 'awaiting_feedback',
@@ -270,7 +288,7 @@ const statusLabel: Record<string, string> = {
   open: '待处理', addressing: '讲解中', awaiting_feedback: '等待反馈', closed: '已关闭',
 }
 const sourceLabel: Record<string, string> = {
-  student: '课堂页面', local: '课堂页面', polyv_qa: '直播提问', polyv: '直播提问',
+  student: '课堂页面', local: '课堂页面', polyv_qa: '直播提问', polyv: '直播提问', polyv_chat: '直播聊天',
 }
 
 async function advance(cluster: Cluster) {
@@ -351,7 +369,7 @@ onBeforeUnmount(() => {
     <template v-else>
     <header class="page-heading">
       <div><p class="eyebrow">教师工作台</p><h1>{{ snapshot.title }}</h1><p>{{ snapshot.status === 'ended' ? '课堂已结束 · 数据只读' : '实时汇总学生疑问与理解反馈' }}</p></div>
-      <div class="connection"><span class="live-dot"></span><div><strong>{{ snapshot.status === 'ended' ? '课堂已结束' : error ? '部分功能需要处理' : snapshot.integration_status === 'degraded' ? '互动同步暂时中断' : '课堂数据已连接' }}</strong><small>{{ error || integrationMessage || (snapshot.status === 'ended' ? '可查看报告或创建下一堂课' : '新问题会自动出现在下方') }}</small></div><button @click="refresh">刷新</button><RouterLink class="button-link" :to="`/report/${route.params.sessionId}`">查看报告</RouterLink><button v-if="snapshot.status !== 'ended'" @click="syncPolyv">同步最新提问</button><button v-if="snapshot.status !== 'ended'" class="danger-action" :disabled="ending" @click="finishClassroom">{{ ending ? '正在结束…' : '结束课堂' }}</button><button v-else class="primary-action" :disabled="creatingNext" @click="createNextClassroom">{{ creatingNext ? '正在创建…' : '创建下一堂课' }}</button></div>
+      <div class="connection"><span class="live-dot"></span><div><strong>{{ snapshot.status === 'ended' ? '课堂已结束' : error ? '部分功能需要处理' : snapshot.integration_status === 'degraded' ? '互动同步暂时中断' : '课堂数据已连接' }}</strong><small>{{ error || integrationMessage || (snapshot.status === 'ended' ? '可查看报告或创建下一堂课' : '新问题会自动出现在下方') }}</small></div><button @click="refresh">刷新</button><RouterLink class="button-link" :to="`/report/${route.params.sessionId}`">查看报告</RouterLink><button v-if="snapshot.status !== 'ended'" @click="syncPolyv">同步聊天与提问</button><button v-if="snapshot.status !== 'ended'" class="danger-action" :disabled="ending" @click="finishClassroom">{{ ending ? '正在结束…' : '结束课堂' }}</button><button v-else class="primary-action" :disabled="creatingNext" @click="createNextClassroom">{{ creatingNext ? '正在创建…' : '创建下一堂课' }}</button></div>
     </header>
 
     <section v-if="snapshot?.status === 'ended'" class="surface session-ended-notice">
@@ -378,6 +396,14 @@ onBeforeUnmount(() => {
       <article><span>疑问主题</span><strong>{{ clusters.length }}</strong><small>相似问题自动汇总</small></article>
       <article><span>问题总数</span><strong>{{ clusters.reduce((sum, item) => sum + item.question_count, 0) }}</strong><small>已自动过滤重复提交</small></article>
       <article><span>仍需关注</span><strong>{{ activeClusterTotal }}</strong><small>{{ snapshot.pending_questions.length }} 条问题等待重新处理</small></article>
+    </section>
+
+    <section v-if="chatReviewQueue.length" class="surface pending-panel">
+      <div class="pending-heading"><div><p class="eyebrow">AI 待确认</p><h2>可能是课程疑问的聊天</h2></div><span>{{ chatReviewQueue.length }} 条</span></div>
+      <div v-for="item in chatReviewQueue" :key="item.id" class="pending-row">
+        <span><strong>{{ item.content }}</strong><small>建议：{{ item.suggested_question || item.normalized_intent }} · 置信度 {{ Math.round(item.confidence * 100) }}%</small></span>
+        <div><button @click="decideChat(item, 'promote')">收录为疑问</button><button @click="decideChat(item, 'ignore')">忽略</button></div>
+      </div>
     </section>
 
     <div class="dashboard-grid">

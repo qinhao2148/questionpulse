@@ -2,6 +2,8 @@ from app.models.base import Base
 from app.models.classroom import (
     AIDecision,
     AIRun,
+    ChatClassification,
+    ChatMessage,
     CheckOption,
     CheckQuestion,
     CheckResponse,
@@ -20,6 +22,8 @@ __all__ = [
     "Base",
     "AIDecision",
     "AIRun",
+    "ChatClassification",
+    "ChatMessage",
     "CheckOption",
     "CheckQuestion",
     "CheckResponse",

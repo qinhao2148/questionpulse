@@ -227,3 +227,48 @@ class CheckResponse(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+
+class ChatMessage(Base):
+    """A POLYV public chat message considered by the question detector."""
+
+    __tablename__ = "chat_messages"
+    __table_args__ = (UniqueConstraint("session_id", "source", "external_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), index=True)
+    participant_id: Mapped[str | None] = mapped_column(ForeignKey("participants.id"), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="polyv_chat")
+    external_id: Mapped[str] = mapped_column(String(100))
+    polyv_session_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    content: Mapped[str] = mapped_column(String(500))
+    normalized_content: Mapped[str] = mapped_column(String(500))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime)
+    ingestion_method: Mapped[str] = mapped_column(String(32), default="sdk")
+    official_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    classification_status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    promoted_question_id: Mapped[str | None] = mapped_column(ForeignKey("questions.id"))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ChatClassification(Base):
+    __tablename__ = "chat_classifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    chat_message_id: Mapped[str] = mapped_column(
+        ForeignKey("chat_messages.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    ai_run_id: Mapped[str | None] = mapped_column(ForeignKey("ai_runs.id"), index=True)
+    is_question: Mapped[bool] = mapped_column(Boolean)
+    confidence: Mapped[float] = mapped_column(Float)
+    question_type: Mapped[str] = mapped_column(String(40))
+    normalized_intent: Mapped[str] = mapped_column(String(240))
+    suggested_question: Mapped[str | None] = mapped_column(String(500))
+    reason: Mapped[str] = mapped_column(String(500))
+    decision: Mapped[str] = mapped_column(String(40))
+    decided_by: Mapped[str] = mapped_column(String(40), default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

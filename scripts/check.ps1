@@ -9,6 +9,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
 pnpm test:frontend
 if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed.' }
 
+npm --prefix polyv-watch-client run check
+if ($LASTEXITCODE -ne 0) { throw 'POLYV watch client typecheck failed.' }
+npm --prefix polyv-watch-client run build
+if ($LASTEXITCODE -ne 0) { throw 'POLYV watch client build failed.' }
+
 & (Join-Path $PSScriptRoot 'check-extension.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'Extension check failed.' }
 

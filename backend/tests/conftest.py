@@ -1,9 +1,9 @@
 import pytest
 
-from app.api.routes import checks, clusters, questions, reports, sessions, shared
+from app.api.routes import chat, checks, clusters, questions, reports, sessions, shared
 from app.core.config import get_settings
 
-MODULES = (shared, sessions, questions, clusters, reports, checks)
+MODULES = (shared, sessions, questions, clusters, reports, checks, chat)
 
 
 @pytest.fixture(autouse=True)

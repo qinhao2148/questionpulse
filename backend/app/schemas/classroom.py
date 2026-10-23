@@ -47,6 +47,17 @@ class QuestionCreate(BaseModel):
     content: str = Field(min_length=1, max_length=500)
 
 
+class ChatMessageCreate(BaseModel):
+    external_id: str = Field(min_length=1, max_length=100)
+    polyv_session_id: str | None = Field(default=None, max_length=100)
+    content: str = Field(min_length=1, max_length=500)
+    occurred_at: datetime
+
+
+class ChatMessageReview(BaseModel):
+    action: Literal["promote", "ignore"]
+
+
 class PolyvQuestionEvent(BaseModel):
     external_id: str = Field(min_length=1, max_length=100)
     viewer_key: str = Field(min_length=1, max_length=100)

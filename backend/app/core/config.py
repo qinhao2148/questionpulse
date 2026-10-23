@@ -21,7 +21,12 @@ class Settings(BaseSettings):
         "mysql+asyncmy://questionpulse:questionpulse_dev@127.0.0.1:3307/"
         "questionpulse?charset=utf8mb4"
     )
-    cors_origins: list[str] | str = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    cors_origins: list[str] | str = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:15021",
+        "http://127.0.0.1:15021",
+    ]
     polyv_app_id: str = ""
     polyv_app_secret: str = ""
     polyv_channel_id: str = ""

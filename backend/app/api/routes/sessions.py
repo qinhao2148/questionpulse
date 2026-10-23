@@ -22,6 +22,7 @@ from app.api.routes.shared import (
 from app.core.auth import (
     issue_access_token,
     issue_join_code,
+    pseudonymize_external_viewer,
     teacher_portal_token,
     token_digest,
 )
@@ -227,6 +228,7 @@ async def join_session_by_code(payload: StudentEntryRequest, db: Database) -> di
     student_token = await issue_student_token(db, participant)
     await db.commit()
     await db.refresh(participant)
+    settings = get_settings()
     return {
         "data": {
             "session_id": classroom.id,
@@ -234,6 +236,11 @@ async def join_session_by_code(payload: StudentEntryRequest, db: Database) -> di
             "participant_id": participant.id,
             "access_token": student_token,
             "join_code": classroom.join_code,
+            "polyv_channel_id": classroom.polyv_channel_id or settings.polyv_channel_id or None,
+            "polyv_session_id": classroom.polyv_session_id or settings.polyv_session_id or None,
+            "polyv_viewer_id": pseudonymize_external_viewer(
+                participant.id, settings.participant_pseudonym_key
+            ),
         }
     }
 

@@ -9,6 +9,7 @@ POLYV 直播课堂疑问聚合与解决追踪工具。
 ```text
 heikeson/
 ├─ frontend/                     Vue 3 + TypeScript 前端
+├─ polyv-watch-client/           保利威官方观看端源码（v2.20.0）及 QuestionPulse 定制
 ├─ extension/                    POLYV 网页开播台教师悬浮助手
 ├─ backend/                      FastAPI + SQLAlchemy 后端
 ├─ scripts/                      环境准备、启动与检查脚本
@@ -24,6 +25,7 @@ heikeson/
 - [开发环境](docs/ENVIRONMENT.md)：已检测版本、初始化、启动和检查命令。
 - [接口契约](docs/API_CONTRACT.md)：前后端对象、HTTP、实时事件与验收样例。
 - [POLYV 接入映射](docs/POLYV_INTEGRATION.md)：字段、权限边界、真实联调门槛与降级策略。
+- [定制观看端与聊天疑问链路](docs/POLYV_DIY_CHAT_PIPELINE.md)：实时上报、DeepSeek 判疑、服务端补偿、理解反馈与答题闭环。
 - [聚类基线](docs/CLUSTERING_BASELINE.md)：数据划分、复现方式、指标解释与模型路线。
 - [开发与验收清单](docs/IMPLEMENTATION_CHECKLIST.md)：24 小时执行顺序和端到端验收场景。
 - [0—5 小时开发成果](docs/LOCAL_QUESTION_PIPELINE.md)：本地持久化、语义聚类、演示数据和已知边界。
@@ -44,9 +46,13 @@ heikeson/
 - [比赛资料说明](assets/competition/README.md)：海报原件、切片目录与已确认规则。
 - [归档说明](archive/README.md)：重复切片等可恢复文件。
 
-当前技术实现：Vue 3 + TypeScript、FastAPI、MySQL 8、SQLAlchemy Async、REST 快照轮询、DeepSeek 结构化语义分析与本地降级；POLYV 官方 SDK 独立负责直播与互动实时连接。
+当前技术实现：Vue 3 + TypeScript、FastAPI、MySQL 8、SQLAlchemy Async、REST 快照轮询、DeepSeek 结构化语义分析与本地降级；`polyv-watch-client` 基于保利威官方 `polyv-web-live-watch-sdk` v2.20.0 源码进行本地定制，官方 SDK 继续负责直播与聊天实时连接。
 
-本地演示：启动后端后运行 `cd backend; uv run python scripts/seed_demo.py`，使用输出的课堂 ID 访问 `/student/{id}`、`/teacher/{id}`、`/report/{id}`。配置 `.env` 中的 POLYV 凭据后，教师端“同步 POLYV 问答”会发起真实服务端调用；没有凭据或接口异常时保留本地演示闭环并明确显示降级状态。
+学生加入课堂后会跳转到本地定制观看端。普通公聊发送成功后，观看端将该学生自己的消息和官方消息 ID 上报 QuestionPulse；后端使用 DeepSeek 判断是否为课程疑问，高置信度自动进入疑问聚类，中等置信度进入教师审核区。教师点击“同步聊天与提问”时，后端还会通过保利威签名 API 拉取聊天历史，补偿浏览器断线期间遗漏的消息。讲解结束后，观看端内的 QuestionPulse 面板会显示“已理解/仍困惑”和教师发布的理解检测题。
+
+首次运行先执行 `./scripts/bootstrap.ps1`。配置 `.env` 中的 POLYV 凭据后，`./scripts/start-demo.ps1` 会同时启动 FastAPI（8000）、教师前端（5173）和定制观看端（15021）。教师端“同步聊天与提问”会发起真实服务端调用；`appSecret` 只保存在后端，绝不进入观看端。没有凭据或接口异常时保留本地演示闭环并明确显示降级状态。
+
+保利威源码的再发布和闭源使用须遵守 `polyv-watch-client/LICENSE`：保利威客户适用其商业授权，其他情况适用 GPLv2。上线前应由账号所有方确认客户资格和品牌/域名配置。
 
 比赛现场可直接运行：
 

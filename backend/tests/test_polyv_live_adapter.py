@@ -1,4 +1,5 @@
 import hashlib
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -164,3 +165,62 @@ async def test_fetch_questions_uses_legacy_source_when_qa_is_unavailable() -> No
             "4146015"
         )
     assert [item.external_id for item in questions] == ["ask-fallback"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_chat_messages_keeps_only_public_text_messages() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        query = dict(request.url.params)
+        assert request.url.scheme == "https"
+        assert query["userType"] == "slice,viewer,attendee,student"
+        assert query["status"] == "pass"
+        assert query["sign"] == build_sign(
+            {key: value for key, value in query.items() if key != "sign"}, "secret"
+        )
+        return httpx.Response(
+            200,
+            json={
+                "code": 200,
+                "status": "success",
+                "data": {
+                    "contents": [
+                        {
+                            "id": "chat-1",
+                            "content": "为什么这里要加终止条件？",
+                            "time": 1722912874624,
+                            "sourceType": "public",
+                            "msgType": None,
+                            "user": {"userId": "viewer-question"},
+                        },
+                        {
+                            "id": "image-1",
+                            "content": "{\"uploadImgUrl\":\"example\"}",
+                            "time": 1722912874625,
+                            "sourceType": "public",
+                            "msgType": "chatImg",
+                            "user": {"userId": "viewer-image"},
+                        },
+                        {
+                            "id": "private-1",
+                            "content": "私聊",
+                            "time": 1722912874626,
+                            "sourceType": "extend",
+                            "msgType": None,
+                            "user": {"userId": "viewer-private"},
+                        },
+                    ]
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        messages = await PolyvQuestionAdapter(
+            "app", "secret", client=client
+        ).fetch_chat_messages(
+            "4146015",
+            start_at=datetime(2026, 10, 23, tzinfo=UTC),
+            end_at=datetime(2026, 10, 23, 1, tzinfo=UTC),
+        )
+    assert [item.external_id for item in messages] == ["chat-1"]
+    assert messages[0].viewer_key == "viewer-question"
+    assert messages[0].source == "polyv_chat"

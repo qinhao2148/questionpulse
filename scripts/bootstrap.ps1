@@ -9,6 +9,14 @@ if (-not (Test-Path -LiteralPath '.env')) {
 
 pnpm install
 if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed.' }
+Push-Location (Join-Path $projectRoot 'polyv-watch-client')
+try {
+    npm ci
+    if ($LASTEXITCODE -ne 0) { throw 'POLYV watch client dependency installation failed.' }
+}
+finally {
+    Pop-Location
+}
 Push-Location backend
 try {
     uv sync --python 3.11
