@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { createClassroom, fetchHealth, fetchTeacherClassrooms, getTeacherPortalToken, loginTeacher, logoutTeacher, type TeacherClassroomSummary } from '../services/api'
+import TeacherPage from './TeacherPage.vue'
 
-const router = useRouter()
+const selectedSessionId = ref('')
 const state = ref<'checking' | 'online' | 'offline'>('checking')
 const loggedIn = ref(Boolean(getTeacherPortalToken()))
 const username = ref('')
@@ -31,7 +31,7 @@ async function signIn() {
 function signOut() { logoutTeacher(); loggedIn.value = false; classrooms.value = [] }
 async function startClassroom() {
   createError.value = ''; creating.value = true
-  try { const classroom = await createClassroom(classroomTitle.value.trim()); await router.push(`/teacher/${classroom.id}`) }
+  try { const classroom = await createClassroom(classroomTitle.value.trim()); selectedSessionId.value = classroom.id }
   catch (error) { createError.value = error instanceof Error ? error.message : '课堂创建失败，请稍后重试' }
   finally { creating.value = false }
 }
@@ -47,10 +47,22 @@ onMounted(async () => {
   }
 })
 onBeforeUnmount(() => window.removeEventListener('questionpulse:teacher-login-required', signOut))
+
+async function closeClassroom() {
+  selectedSessionId.value = ''
+  await loadClassrooms()
+}
 </script>
 
 <template>
-  <main class="workspace classroom-center">
+  <TeacherPage
+    v-if="selectedSessionId"
+    :key="selectedSessionId"
+    :session-id="selectedSessionId"
+    @close="closeClassroom"
+    @open-session="selectedSessionId = $event"
+  />
+  <main v-else class="workspace classroom-center">
     <section v-if="!loggedIn" class="surface teacher-login-card">
       <div><p class="eyebrow">教师登录</p><h1>教师课堂中心</h1><p>登录后统一管理当前课堂、历史课堂和课堂报告。</p></div>
       <form class="teacher-login-form" @submit.prevent="signIn">
@@ -72,14 +84,14 @@ onBeforeUnmount(() => window.removeEventListener('questionpulse:teacher-login-re
       <section class="classroom-section">
         <div class="section-title"><div><p class="eyebrow">进行中</p><h2>当前课堂</h2></div><span>{{ currentClassrooms.length }} 堂</span></div>
         <div class="classroom-cards">
-          <article v-for="item in currentClassrooms" :key="item.id" class="surface classroom-card"><span class="status addressing">进行中</span><h3>{{ item.title }}</h3><p>课堂码 {{ item.join_code }} · {{ item.cluster_count }} 个疑问主题 · {{ item.question_count }} 条问题</p><div class="classroom-card-actions"><RouterLink class="button-link" :to="`/teacher/${item.id}`">继续课堂</RouterLink><RouterLink :to="`/report/${item.id}`">查看报告</RouterLink></div></article>
+          <article v-for="item in currentClassrooms" :key="item.id" class="surface classroom-card"><span class="status addressing">进行中</span><h3>{{ item.title }}</h3><p>课堂码 {{ item.join_code }} · {{ item.cluster_count }} 个疑问主题 · {{ item.question_count }} 条问题</p><div class="classroom-card-actions"><button class="button-link" @click="selectedSessionId = item.id">进入课堂</button></div></article>
           <p v-if="!currentClassrooms.length" class="empty-state">当前没有进行中的课堂。</p>
         </div>
       </section>
       <section class="classroom-section">
         <div class="section-title"><div><p class="eyebrow">历史记录</p><h2>已结束课堂</h2></div><span>{{ endedClassrooms.length }} 堂</span></div>
         <div class="classroom-cards">
-          <article v-for="item in visibleEndedClassrooms" :key="item.id" class="surface classroom-card"><span class="status closed">已结束</span><h3>{{ item.title }}</h3><p>{{ item.cluster_count }} 个疑问主题 · {{ item.question_count }} 条问题</p><div class="classroom-card-actions"><RouterLink class="button-link" :to="`/teacher/${item.id}`">查看课堂</RouterLink><RouterLink :to="`/report/${item.id}`">课堂报告</RouterLink></div></article>
+          <article v-for="item in visibleEndedClassrooms" :key="item.id" class="surface classroom-card"><span class="status closed">已结束</span><h3>{{ item.title }}</h3><p>{{ item.cluster_count }} 个疑问主题 · {{ item.question_count }} 条问题</p><div class="classroom-card-actions"><button class="button-link" @click="selectedSessionId = item.id">查看课堂与报告</button></div></article>
           <p v-if="!endedClassrooms.length" class="empty-state">结束课堂后，记录会出现在这里。</p>
         </div>
         <button v-if="endedClassrooms.length > visibleEndedClassrooms.length" class="history-toggle" @click="showAllHistory = true">展开全部 {{ endedClassrooms.length }} 堂历史课堂</button>

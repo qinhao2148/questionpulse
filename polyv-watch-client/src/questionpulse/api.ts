@@ -70,6 +70,43 @@ function readCredentials(): Credentials | null {
 
 export const questionPulseCredentials = readCredentials();
 
+export async function joinQuestionPulseClassroom(joinCode: string, displayName: string) {
+  const query = new URLSearchParams(window.location.search);
+  const apiBase = (query.get('qpApiBase') || 'http://127.0.0.1:8000/api/v1').replace(/\/$/, '');
+  let viewerKey = localStorage.getItem('questionpulse.viewer_key');
+  if (!viewerKey) {
+    viewerKey = crypto.randomUUID();
+    localStorage.setItem('questionpulse.viewer_key', viewerKey);
+  }
+  const response = await fetch(`${apiBase}/student/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      join_code: joinCode.trim().toUpperCase(),
+      display_name: displayName.trim(),
+      viewer_key: viewerKey,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.detail || '加入课堂失败');
+  const classroom = payload.data;
+  if (!classroom.polyv_channel_id) throw new Error('课堂尚未绑定 POLYV 频道');
+  const targetQuery = new URLSearchParams({
+    channelId: classroom.polyv_channel_id,
+    viewerid: classroom.polyv_viewer_id,
+    nickname: displayName.trim(),
+    qpSessionId: classroom.session_id,
+    qpApiBase: apiBase,
+  });
+  const handoff = new URLSearchParams({
+    token: classroom.access_token,
+    participantId: classroom.participant_id,
+  });
+  window.location.assign(
+    `${window.location.pathname}?${targetQuery.toString()}#${handoff.toString()}`,
+  );
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!questionPulseCredentials) throw new Error('QuestionPulse 课堂身份不存在');
   const response = await fetch(`${questionPulseCredentials.apiBase}${path}`, {

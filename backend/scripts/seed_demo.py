@@ -76,13 +76,12 @@ def main() -> None:
         "session_id": session_id,
         "join_code": access["join_code"],
         "teacher_token": access["teacher_token"],
-        "student_url": "http://127.0.0.1:5173/student",
-        "teacher_url": f"http://127.0.0.1:5173/teacher/{session_id}",
-        "teacher_bootstrap_url": (
-            f"http://127.0.0.1:5173/teacher/{session_id}"
-            f"#access={access['teacher_token']}&code={access['join_code']}"
+        "student_url": (
+            "http://127.0.0.1:15021/index.html"
+            "?qpJoin=1&qpApiBase=http%3A%2F%2F127.0.0.1%3A8000%2Fapi%2Fv1"
         ),
-        "report_url": f"http://127.0.0.1:5173/report/{session_id}",
+        "teacher_url": "http://127.0.0.1:5173/",
+        "report_url": "http://127.0.0.1:5173/",
     }
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

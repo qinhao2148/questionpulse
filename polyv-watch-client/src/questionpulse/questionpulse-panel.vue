@@ -2,7 +2,7 @@
   <aside
     v-if="enabled"
     class="questionpulse-panel"
-    :class="{ 'is-collapsed': collapsed }"
+    :class="{ 'is-collapsed': collapsed, 'is-join-mode': joinMode }"
   >
     <header
       class="questionpulse-panel__header"
@@ -17,6 +17,30 @@
       v-if="!collapsed"
       class="questionpulse-panel__body"
     >
+      <form
+        v-if="joinMode"
+        class="questionpulse-join"
+        @submit.prevent="joinClassroom"
+      >
+        <h3>加入直播课堂</h3>
+        <p>输入教师提供的课堂码，进入保利威直播和课堂互动。</p>
+        <input
+          v-model="displayName"
+          maxlength="100"
+          placeholder="你的姓名"
+        />
+        <input
+          v-model="joinCode"
+          maxlength="12"
+          placeholder="课堂码"
+        />
+        <button
+          type="submit"
+          :disabled="joining || !displayName.trim() || joinCode.trim().length < 4"
+        >
+          {{ joining ? '正在进入…' : '进入课堂' }}
+        </button>
+      </form>
       <p
         v-if="error"
         class="questionpulse-panel__error"
@@ -102,6 +126,7 @@ import {
   answerQuestionPulseCheck,
   fetchQuestionPulseChecks,
   fetchQuestionPulseSnapshot,
+  joinQuestionPulseClassroom,
   questionPulseCredentials,
   sendQuestionPulseFeedback,
   uploadQuestionPulseChat,
@@ -109,8 +134,12 @@ import {
   type QuestionPulseSnapshot,
 } from './api';
 
-const enabled = Boolean(questionPulseCredentials);
+const joinMode = !questionPulseCredentials;
+const enabled = true;
 const collapsed = ref(false);
+const displayName = ref(localStorage.getItem('questionpulse.display_name') || '');
+const joinCode = ref('');
+const joining = ref(false);
 const snapshot = ref<QuestionPulseSnapshot | null>(null);
 const checks = ref<QuestionPulseCheck[]>([]);
 const error = ref('');
@@ -124,10 +153,23 @@ const activeCluster = computed(() =>
   ),
 );
 const connectionLabel = computed(() => {
+  if (joinMode) return '学生入口';
   if (snapshot.value?.status === 'ended') return '课堂已结束';
   if (error.value) return '连接异常';
   return '疑问识别已连接';
 });
+
+async function joinClassroom() {
+  joining.value = true;
+  error.value = '';
+  try {
+    localStorage.setItem('questionpulse.display_name', displayName.value.trim());
+    await joinQuestionPulseClassroom(joinCode.value, displayName.value);
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '加入课堂失败';
+    joining.value = false;
+  }
+}
 
 async function refresh() {
   if (!enabled) return;
@@ -182,7 +224,7 @@ function onReplaceChatMessage(event: { chatMsg: ChatMsgType }) {
 }
 
 onMounted(() => {
-  if (!enabled) return;
+  if (joinMode) return;
   const watchCore = getWatchCore();
   watchCore.chat.eventEmitter.on(ChatEvents.ChatMessage, onChatMessage);
   watchCore.chat.eventEmitter.on(ChatEvents.ReplaceChatMessage, onReplaceChatMessage);
@@ -192,7 +234,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.clearInterval(refreshTimer);
-  if (!enabled) return;
+  if (joinMode) return;
   const watchCore = getWatchCore();
   watchCore.chat.eventEmitter.off(ChatEvents.ChatMessage, onChatMessage);
   watchCore.chat.eventEmitter.off(ChatEvents.ReplaceChatMessage, onReplaceChatMessage);
@@ -213,6 +255,31 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(118, 139, 255, 0.35);
   border-radius: 18px;
   box-shadow: 0 18px 50px rgba(17, 27, 68, 0.24);
+}
+.questionpulse-panel.is-join-mode {
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 100vw;
+  background: #f4f6fb;
+  border: 0;
+  border-radius: 0;
+}
+.questionpulse-panel.is-join-mode .questionpulse-panel__header {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+}
+.questionpulse-panel.is-join-mode .questionpulse-panel__header button {
+  display: none;
+}
+.questionpulse-panel.is-join-mode .questionpulse-panel__body {
+  width: min(420px, calc(100vw - 32px));
+  padding: 26px;
+  background: white;
+  border-radius: 18px;
+  box-shadow: 0 18px 50px rgba(17, 27, 68, 0.14);
 }
 .questionpulse-panel__header {
   display: flex;
@@ -241,6 +308,32 @@ onBeforeUnmount(() => {
   max-height: 55vh;
   padding: 12px;
   overflow: auto;
+}
+.questionpulse-join {
+  display: grid;
+  gap: 10px;
+}
+.questionpulse-join h3,
+.questionpulse-join p {
+  margin: 0;
+}
+.questionpulse-join p {
+  line-height: 1.5;
+  color: #687189;
+}
+.questionpulse-join input,
+.questionpulse-join button {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #dfe3f7;
+  border-radius: 9px;
+}
+.questionpulse-join button {
+  color: white;
+  cursor: pointer;
+  background: #5667ed;
+  border: 0;
 }
 .questionpulse-card {
   padding: 12px;

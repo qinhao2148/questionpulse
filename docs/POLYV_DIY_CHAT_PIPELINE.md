@@ -6,7 +6,7 @@
 
 ## 数据流
 
-1. 学生用课堂码加入，后端签发仅限该课堂的学生令牌，并生成不暴露内部身份的 `polyv_viewer_id`。
+1. 学生直接打开本地定制观看端，用课堂码加入；后端签发仅限该课堂的学生令牌，并生成不暴露内部身份的 `polyv_viewer_id`。
 2. 学生进入 `http://127.0.0.1:15021/index.html`，频道号、昵称通过查询参数传递；QuestionPulse 令牌先放在 URL fragment 中，页面加载后立即移入 `sessionStorage` 并清除 fragment。
 3. 保利威聊天室确认公聊发送成功后，定制面板仅上报当前学生自己的文本消息、官方消息 ID、场次和时间。图片、红包、自定义消息、他人消息和发送失败消息不会上报。
 4. FastAPI 以 `(session_id, source, external_id)` 幂等保存，DeepSeek 输出结构化 `is_question / confidence / question_type / reason`。没有模型或模型失败时使用保守的本地规则。

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+
+import ReportPage from './ReportPage.vue'
 
 import {
   approveCheck,
@@ -30,8 +31,8 @@ import {
   TEACHER_LOGIN_REQUIRED_MESSAGE,
 } from '../services/api'
 
-const route = useRoute()
-const router = useRouter()
+const props = defineProps<{ sessionId: string }>()
+const emit = defineEmits<{ close: []; openSession: [sessionId: string] }>()
 const snapshot = ref<Snapshot | null>(null)
 const checks = ref<CheckQuestion[]>([])
 const chatReviewQueue = ref<ChatReviewItem[]>([])
@@ -43,6 +44,7 @@ const ending = ref(false)
 const creatingNext = ref(false)
 const joinCodeDraft = ref('')
 const savingJoinCode = ref(false)
+const showingReport = ref(false)
 const loading = ref(true)
 const missingTeacherAccess = ref(false)
 const copilotState = ref<'idle' | 'waiting' | 'connected' | 'unavailable'>('idle')
@@ -66,7 +68,11 @@ const participantTotal = computed(() => new Set(
 ).size)
 const activeClusterTotal = computed(() => clusters.value.filter((item) => item.status !== 'closed').length)
 const joinCode = computed(() => snapshot.value?.join_code || '')
-const studentJoinUrl = computed(() => `${window.location.origin}/student`)
+const studentJoinUrl = computed(() => {
+  const base = import.meta.env.VITE_POLYV_WATCH_BASE_URL || 'http://127.0.0.1:15021/index.html'
+  const query = new URLSearchParams({ qpJoin: '1', qpApiBase: import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1' })
+  return `${base}?${query.toString()}`
+})
 
 function handleCopilotPairing(event: MessageEvent) {
   const message = event.data
@@ -82,7 +88,7 @@ function handleCopilotPairing(event: MessageEvent) {
 }
 
 function connectCopilot() {
-  const sessionId = String(route.params.sessionId)
+  const sessionId = props.sessionId
   const teacherToken = getTeacherAccessToken()
   if (!teacherToken) {
     error.value = '请先返回教师课堂中心登录。'
@@ -114,7 +120,7 @@ function connectCopilot() {
 async function refresh() {
   error.value = ''
   try {
-    const sessionId = String(route.params.sessionId)
+    const sessionId = props.sessionId
     ;[snapshot.value, checks.value, chatReviewQueue.value] = await Promise.all([
       fetchTeacherSnapshot(sessionId), fetchTeacherChecks(sessionId), fetchChatReviewQueue(sessionId),
     ])
@@ -126,7 +132,7 @@ async function refresh() {
       // The token has been dropped by the request layer; send the teacher back
       // to the console instead of stranding them on a read-only error page.
       missingTeacherAccess.value = true
-      await router.replace('/')
+      emit('close')
       return
     }
     error.value = message
@@ -140,7 +146,7 @@ async function saveJoinCode() {
   if (code.length < 4) return
   savingJoinCode.value = true
   error.value = ''
-  try { await updateJoinCode(String(route.params.sessionId), code); await refresh() }
+  try { await updateJoinCode(props.sessionId, code); await refresh() }
   catch (reason) { error.value = reason instanceof Error ? reason.message : '课堂码保存失败' }
   finally { savingJoinCode.value = false }
 }
@@ -159,7 +165,7 @@ async function bootstrapTeacherAccess() {
 async function detach(questionId: string) {
   error.value = ''
   try {
-    await detachQuestion(String(route.params.sessionId), questionId)
+    await detachQuestion(props.sessionId, questionId)
     selectedId.value = ''
     await refresh()
   } catch (reason) {
@@ -170,7 +176,7 @@ async function detach(questionId: string) {
 async function retry(questionId: string) {
   error.value = ''
   try {
-    await retryQuestion(String(route.params.sessionId), questionId)
+    await retryQuestion(props.sessionId, questionId)
     await refresh()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '重试失败'
@@ -182,7 +188,7 @@ async function finishClassroom() {
   error.value = ''
   ending.value = true
   try {
-    await endClassroom(String(route.params.sessionId))
+    await endClassroom(props.sessionId)
     integrationMessage.value = '课堂已结束，学生端已停止播放和提问。请同时在开播页面结束直播。'
     await refresh()
   } catch (reason) {
@@ -197,7 +203,7 @@ async function createNextClassroom() {
   error.value = ''
   try {
     const next = await createClassroom(`${snapshot.value?.title || 'QuestionPulse 课堂'} · 新课堂`)
-    await router.push(`/teacher/${next.id}`)
+    emit('openSession', next.id)
     selectedId.value = ''
     integrationMessage.value = '新课堂已创建，上一堂课的报告保持不变。'
     await refresh()
@@ -212,7 +218,7 @@ async function verifyContract() {
   error.value = ''
   integrationMessage.value = ''
   try {
-    const result = await verifyPolyvContract(String(route.params.sessionId))
+    const result = await verifyPolyvContract(props.sessionId)
     integrationMessage.value = result.data.accepted
       ? `契约验证成功：导入 ${result.data.accepted} 条，跳过 ${result.data.duplicates} 条重复数据`
       : `契约验证成功：${result.data.duplicates} 条数据均已去重`
@@ -226,7 +232,7 @@ async function syncPolyv() {
   error.value = ''
   integrationMessage.value = ''
   try {
-    const sessionId = String(route.params.sessionId)
+    const sessionId = props.sessionId
     const chat = await syncPolyvChatMessages(sessionId)
     const questions = await syncPolyvQuestions(sessionId)
     integrationMessage.value = `真实同步完成：聊天新增 ${chat.data.accepted} 条、去重 ${chat.data.duplicates} 条；提问新增 ${questions.data.accepted} 条、去重 ${questions.data.duplicates} 条`
@@ -240,7 +246,7 @@ async function syncPolyv() {
 async function drill(action: 'degrade' | 'recover') {
   error.value = ''
   try {
-    await runIntegrationDrill(String(route.params.sessionId), action)
+    await runIntegrationDrill(props.sessionId, action)
     integrationMessage.value = action === 'degrade'
       ? '已进入本地降级演练：课堂业务继续可用'
       : '本地接入状态已恢复'
@@ -253,7 +259,7 @@ async function drill(action: 'degrade' | 'recover') {
 async function retryAll() {
   error.value = ''
   try {
-    const result = await retryPendingQuestions(String(route.params.sessionId))
+    const result = await retryPendingQuestions(props.sessionId)
     integrationMessage.value = `已尝试 ${result.data.attempted} 条，恢复 ${result.data.recovered} 条，剩余 ${result.data.remaining} 条`
     await refresh()
   } catch (reason) {
@@ -264,7 +270,7 @@ async function retryAll() {
 async function decideChat(item: ChatReviewItem, action: 'promote' | 'ignore') {
   error.value = ''
   try {
-    await reviewChatMessage(String(route.params.sessionId), item.id, action)
+    await reviewChatMessage(props.sessionId, item.id, action)
     integrationMessage.value = action === 'promote' ? '聊天已收录为疑问并进入聚类。' : '聊天已标记为普通消息。'
     await refresh()
   } catch (reason) {
@@ -295,7 +301,7 @@ async function advance(cluster: Cluster) {
   error.value = ''
   try {
     await updateClusterStatus(
-      String(route.params.sessionId), cluster.id, nextStatus[cluster.status], cluster.version,
+      props.sessionId, cluster.id, nextStatus[cluster.status], cluster.version,
     )
     await refresh()
   } catch (reason) {
@@ -308,7 +314,7 @@ async function createCheck() {
   checkBusy.value = true
   error.value = ''
   try {
-    await generateCheck(String(route.params.sessionId), selected.value.id)
+    await generateCheck(props.sessionId, selected.value.id)
     integrationMessage.value = '理解检测草稿已生成，请审核答案与解释后再发布。'
     await refresh()
   } catch (reason) {
@@ -323,7 +329,7 @@ async function publishCheck() {
   if (!window.confirm('发布后这道题会立刻出现在相关学生的课堂页面上，确定发布吗？')) return
   checkBusy.value = true
   try {
-    await approveCheck(String(route.params.sessionId), selectedCheck.value.id)
+    await approveCheck(props.sessionId, selectedCheck.value.id)
     await refresh()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '发布检测失败'
@@ -337,7 +343,7 @@ async function finishCheck() {
   if (!window.confirm('结束检测后学生将无法继续作答，已提交的答案会保留。确定结束吗？')) return
   checkBusy.value = true
   try {
-    await closeCheck(String(route.params.sessionId), selectedCheck.value.id)
+    await closeCheck(props.sessionId, selectedCheck.value.id)
     await refresh()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '关闭检测失败'
@@ -362,15 +368,17 @@ onBeforeUnmount(() => {
       <p class="eyebrow">教师工作台</p>
       <h1>{{ loading ? '正在加载课堂…' : '无法打开教师工作台' }}</h1>
       <p>{{ loading ? '正在读取课堂信息，请稍候。' : error || '请从教师课堂中心重新进入。' }}</p>
-      <RouterLink v-if="missingTeacherAccess" class="button-link" to="/">返回首页创建课堂</RouterLink>
+      <button v-if="missingTeacherAccess" class="button-link" @click="emit('close')">返回课堂列表</button>
       <button v-else-if="!loading" @click="refresh">重新加载</button>
     </section>
 
     <template v-else>
     <header class="page-heading">
       <div><p class="eyebrow">教师工作台</p><h1>{{ snapshot.title }}</h1><p>{{ snapshot.status === 'ended' ? '课堂已结束 · 数据只读' : '实时汇总学生疑问与理解反馈' }}</p></div>
-      <div class="connection"><span class="live-dot"></span><div><strong>{{ snapshot.status === 'ended' ? '课堂已结束' : error ? '部分功能需要处理' : snapshot.integration_status === 'degraded' ? '互动同步暂时中断' : '课堂数据已连接' }}</strong><small>{{ error || integrationMessage || (snapshot.status === 'ended' ? '可查看报告或创建下一堂课' : '新问题会自动出现在下方') }}</small></div><button @click="refresh">刷新</button><RouterLink class="button-link" :to="`/report/${route.params.sessionId}`">查看报告</RouterLink><button v-if="snapshot.status !== 'ended'" @click="syncPolyv">同步聊天与提问</button><button v-if="snapshot.status !== 'ended'" class="danger-action" :disabled="ending" @click="finishClassroom">{{ ending ? '正在结束…' : '结束课堂' }}</button><button v-else class="primary-action" :disabled="creatingNext" @click="createNextClassroom">{{ creatingNext ? '正在创建…' : '创建下一堂课' }}</button></div>
+      <div class="connection"><span class="live-dot"></span><div><strong>{{ snapshot.status === 'ended' ? '课堂已结束' : error ? '部分功能需要处理' : snapshot.integration_status === 'degraded' ? '互动同步暂时中断' : '课堂数据已连接' }}</strong><small>{{ error || integrationMessage || (snapshot.status === 'ended' ? '可查看报告或创建下一堂课' : '新问题会自动出现在下方') }}</small></div><button @click="emit('close')">课堂列表</button><button @click="refresh">刷新</button><button class="button-link" @click="showingReport = !showingReport">{{ showingReport ? '收起报告' : '课堂报告' }}</button><button v-if="snapshot.status !== 'ended'" @click="syncPolyv">同步聊天与提问</button><button v-if="snapshot.status !== 'ended'" class="danger-action" :disabled="ending" @click="finishClassroom">{{ ending ? '正在结束…' : '结束课堂' }}</button><button v-else class="primary-action" :disabled="creatingNext" @click="createNextClassroom">{{ creatingNext ? '正在创建…' : '创建下一堂课' }}</button></div>
     </header>
+
+    <ReportPage v-if="showingReport" :session-id="props.sessionId" />
 
     <section v-if="snapshot?.status === 'ended'" class="surface session-ended-notice">
       <div><p class="eyebrow">课堂已结束</p><strong>本堂课的数据已保存</strong><small>学生端已经停止播放和提问。如开播页面仍在推流，请回到开播页面点击“结束直播”。</small></div>

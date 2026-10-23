@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
 
 import { fetchReport, type SessionReport } from '../services/api'
 
-const route = useRoute()
+const props = defineProps<{ sessionId: string }>()
 const report = ref<SessionReport | null>(null)
 const error = ref('')
 const loading = ref(true)
@@ -18,7 +17,7 @@ const askRate = computed(() => Math.round((report.value?.ask_rate || 0) * 100))
 async function loadReport() {
   error.value = ''
   try {
-    report.value = await fetchReport(String(route.params.sessionId))
+    report.value = await fetchReport(props.sessionId)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '报告加载失败'
   } finally {
@@ -53,7 +52,7 @@ onMounted(loadReport)
 </script>
 
 <template>
-  <main class="workspace report-page">
+  <section class="report-page embedded-report">
     <p v-if="error" class="error-note">{{ error }}</p>
     <section v-if="loading" class="surface page-state"><p class="eyebrow">课堂报告</p><h1>正在生成报告…</h1><p>正在汇总课堂问题与反馈。</p></section>
     <section v-else-if="!report" class="surface page-state"><p class="eyebrow">课堂报告</p><h1>暂时无法查看报告</h1><p>{{ error || '请稍后重试。' }}</p><button @click="loadReport">重新加载</button></section>
@@ -118,5 +117,5 @@ onMounted(loadReport)
       </section>
       <p class="evidence-note">统计直接来自问题、独立参与者、反馈目标与理解检测；每个结论均可追溯到原始问题和课堂操作。</p>
     </template>
-  </main>
+  </section>
 </template>
