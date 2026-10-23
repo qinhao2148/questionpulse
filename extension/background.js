@@ -22,7 +22,9 @@ const ALLOWED_API_BASES = new Set([
 function isAllowedRequest(path, method, sessionId) {
   const escapedSessionId = String(sessionId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const routes = [
+    ['GET', /^\/teacher\/sessions$/],
     ['GET', new RegExp(`^/sessions/${escapedSessionId}/teacher-snapshot$`)],
+    ['POST', new RegExp(`^/sessions/${escapedSessionId}/end$`)],
     ['GET', new RegExp(`^/sessions/${escapedSessionId}/checks$`)],
     ['PATCH', new RegExp(`^/sessions/${escapedSessionId}/clusters/[0-9a-f-]+/status$`, 'i')],
     ['POST', new RegExp(`^/sessions/${escapedSessionId}/clusters/[0-9a-f-]+/checks/generate$`, 'i')],
@@ -39,7 +41,7 @@ async function callQuestionPulse(path, init = {}) {
     throw new Error('api_base_not_allowed')
   }
   const method = String(init.method || 'GET').toUpperCase()
-  if (!saved.sessionId || !isAllowedRequest(String(path), method, saved.sessionId)) {
+  if (!isAllowedRequest(String(path), method, saved.sessionId || '')) {
     throw new Error('api_path_not_allowed')
   }
   const response = await fetch(`${apiBaseUrl}${path}`, {

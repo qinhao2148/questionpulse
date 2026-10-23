@@ -6,6 +6,8 @@ pnpm typecheck:frontend
 if ($LASTEXITCODE -ne 0) { throw 'Frontend typecheck failed.' }
 pnpm build:frontend
 if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
+pnpm test:frontend
+if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed.' }
 
 & (Join-Path $PSScriptRoot 'check-extension.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'Extension check failed.' }

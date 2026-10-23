@@ -13,6 +13,7 @@ const statusLabel: Record<string, string> = {
 }
 const coverage = computed(() => Math.round((report.value?.feedback_coverage || 0) * 100))
 const checkAccuracy = computed(() => Math.round((report.value?.check_accuracy || 0) * 100))
+const askRate = computed(() => Math.round((report.value?.ask_rate || 0) * 100))
 
 async function loadReport() {
   error.value = ''
@@ -32,11 +33,13 @@ function printReport() {
 function exportCsv() {
   if (!report.value) return
   const escape = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`
-  const rows = [['疑问主题', '状态', '影响人数', '问题数', '已理解', '仍困惑']]
+  const rows = [['疑问主题', '状态', '提问人数', '问题数', '已理解', '仍困惑']]
   report.value.clusters.forEach((cluster) => rows.push([
     cluster.title, cluster.status, String(cluster.participant_count), String(cluster.question_count),
     String(cluster.feedback.understood), String(cluster.feedback.still_confused),
   ]))
+  rows.push([])
+  rows.push(['观看学生', String(report.value.viewer_count), '提问学生', String(report.value.asker_count), '提问率', `${askRate.value}%`])
   const csv = `\uFEFF${rows.map((row) => row.map(escape).join(',')).join('\n')}`
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
   const link = document.createElement('a')
@@ -60,12 +63,15 @@ onMounted(loadReport)
         <div class="report-actions"><button @click="loadReport">刷新</button><button @click="exportCsv">导出 CSV</button><button class="print-button" @click="printReport">打印报告</button></div>
       </header>
       <section class="report-hero surface">
+        <div><span>观看学生</span><strong>{{ report.viewer_count }}</strong></div>
+        <div><span>提问学生</span><strong>{{ report.asker_count }}</strong></div>
+        <div><span>提问率</span><strong>{{ askRate }}%</strong></div>
         <div><span>问题总数</span><strong>{{ report.question_count }}</strong></div>
-        <div><span>提问学生</span><strong>{{ report.participant_count }}</strong></div>
         <div><span>疑问主题</span><strong>{{ report.cluster_count }}</strong></div>
         <div><span>反馈覆盖率</span><strong>{{ coverage }}%</strong></div>
         <div><span>检测正确率</span><strong>{{ checkAccuracy }}%</strong></div>
       </section>
+      <p class="local-record-note">观看学生指通过课堂码进入学生端的学生<span v-if="report.active_viewer_count !== report.viewer_count">（其中 {{ report.active_viewer_count }} 人打开了课堂页）</span>；提问学生是其中提过问的人，另有 {{ report.silent_viewer_count }} 人全程只看未提问。</p>
       <section class="report-grid">
         <article class="surface report-section">
           <p class="eyebrow">重点问题</p><h2>高频疑问</h2>

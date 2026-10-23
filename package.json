@@ -6,6 +6,7 @@
     "dev:frontend": "pnpm --dir frontend dev",
     "build:frontend": "pnpm --dir frontend build",
     "typecheck:frontend": "pnpm --dir frontend typecheck",
+    "test:frontend": "pnpm --dir frontend test",
     "check": "powershell -ExecutionPolicy Bypass -File scripts/check.ps1",
     "demo:start": "powershell -ExecutionPolicy Bypass -File scripts/start-demo.ps1",
     "demo:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-demo.ps1",

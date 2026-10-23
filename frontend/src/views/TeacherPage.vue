@@ -11,19 +11,19 @@ import {
   fetchTeacherSnapshot,
   fetchTeacherChecks,
   generateCheck,
-  getJoinCode,
-  getTeacherToken,
-  rememberTeacherClassroom,
-  saveTeacherAccess,
+  getTeacherAccessToken,
+  hasTeacherAccess,
   retryQuestion,
   retryPendingQuestions,
   runIntegrationDrill,
   syncPolyvQuestions,
   updateClusterStatus,
+  updateJoinCode,
   verifyPolyvContract,
   type Cluster,
   type CheckQuestion,
   type Snapshot,
+  TEACHER_LOGIN_REQUIRED_MESSAGE,
 } from '../services/api'
 
 const route = useRoute()
@@ -36,20 +36,32 @@ const error = ref('')
 const integrationMessage = ref('')
 const ending = ref(false)
 const creatingNext = ref(false)
+const joinCodeDraft = ref('')
+const savingJoinCode = ref(false)
 const loading = ref(true)
 const missingTeacherAccess = ref(false)
 const copilotState = ref<'idle' | 'waiting' | 'connected' | 'unavailable'>('idle')
 let copilotRequestId = ''
-let copilotTimer: ReturnType<typeof window.setTimeout> | undefined
+let copilotTimer: number | undefined
 const clusters = computed(() => snapshot.value?.clusters ?? [])
 const selected = computed(() => clusters.value.find((item) => item.id === selectedId.value))
-const selectedCheck = computed(() => checks.value.find((item) => item.cluster_id === selectedId.value))
+// A check belongs to one feedback round. Matching only on the cluster id made
+// round two reuse round one's finished check, which hid the "生成理解检测题"
+// button for the rest of the lesson.
+const selectedCheck = computed(() => checks.value.find(
+  (item) => item.cluster_id === selectedId.value
+    && item.feedback_round === (selected.value?.feedback_round ?? 0),
+))
+const pastChecks = computed(() => checks.value.filter(
+  (item) => item.cluster_id === selectedId.value
+    && item.feedback_round !== (selected.value?.feedback_round ?? 0),
+))
 const participantTotal = computed(() => new Set(
   clusters.value.flatMap((cluster) => cluster.questions.map((question) => question.participant_id)),
 ).size)
 const activeClusterTotal = computed(() => clusters.value.filter((item) => item.status !== 'closed').length)
-const joinCode = computed(() => getJoinCode(String(route.params.sessionId)))
-const studentJoinUrl = computed(() => `${window.location.origin}/student/${route.params.sessionId}?code=${encodeURIComponent(joinCode.value)}`)
+const joinCode = computed(() => snapshot.value?.join_code || '')
+const studentJoinUrl = computed(() => `${window.location.origin}/student`)
 
 function handleCopilotPairing(event: MessageEvent) {
   const message = event.data
@@ -66,9 +78,9 @@ function handleCopilotPairing(event: MessageEvent) {
 
 function connectCopilot() {
   const sessionId = String(route.params.sessionId)
-  const teacherToken = getTeacherToken(sessionId)
+  const teacherToken = getTeacherAccessToken()
   if (!teacherToken) {
-    error.value = '当前页面没有教师访问令牌，请使用教师专属入口重新打开。'
+    error.value = '请先返回教师课堂中心登录。'
     return
   }
   copilotState.value = 'waiting'
@@ -80,6 +92,7 @@ function connectCopilot() {
     requestId: copilotRequestId,
     payload: {
       apiBaseUrl: `http://${backendHost}:8000/api/v1`,
+      webBaseUrl: window.location.origin,
       sessionId,
       teacherToken,
     },
@@ -100,27 +113,38 @@ async function refresh() {
     ;[snapshot.value, checks.value] = await Promise.all([
       fetchTeacherSnapshot(sessionId), fetchTeacherChecks(sessionId),
     ])
-    rememberTeacherClassroom(sessionId, snapshot.value.title, getJoinCode(sessionId))
+    joinCodeDraft.value = snapshot.value.join_code || ''
     if (!selectedId.value && clusters.value.length) selectedId.value = clusters.value[0].id
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '无法读取课堂'
+    const message = reason instanceof Error ? reason.message : '无法读取课堂'
+    if (message === TEACHER_LOGIN_REQUIRED_MESSAGE) {
+      // The token has been dropped by the request layer; send the teacher back
+      // to the console instead of stranding them on a read-only error page.
+      missingTeacherAccess.value = true
+      await router.replace('/')
+      return
+    }
+    error.value = message
   } finally {
     loading.value = false
   }
 }
 
+async function saveJoinCode() {
+  const code = joinCodeDraft.value.trim().toUpperCase()
+  if (code.length < 4) return
+  savingJoinCode.value = true
+  error.value = ''
+  try { await updateJoinCode(String(route.params.sessionId), code); await refresh() }
+  catch (reason) { error.value = reason instanceof Error ? reason.message : '课堂码保存失败' }
+  finally { savingJoinCode.value = false }
+}
+
 async function bootstrapTeacherAccess() {
-  const fragment = new URLSearchParams(route.hash.replace(/^#/, ''))
-  const access = fragment.get('access') || (typeof route.query.access === 'string' ? route.query.access : '')
-  const code = fragment.get('code') || (typeof route.query.code === 'string' ? route.query.code : '')
-  if (access && code) {
-    saveTeacherAccess(String(route.params.sessionId), access, code)
-    await router.replace({ path: route.path })
-  }
-  if (!getTeacherToken(String(route.params.sessionId))) {
+  if (!hasTeacherAccess()) {
     missingTeacherAccess.value = true
     loading.value = false
-    error.value = '教师页面需要从“创建课堂”流程或教师专属入口进入，无需另行申请权限。'
+    error.value = '请先返回教师课堂中心登录。'
     return
   }
   missingTeacherAccess.value = false
@@ -278,6 +302,7 @@ async function createCheck() {
 
 async function publishCheck() {
   if (!selectedCheck.value) return
+  if (!window.confirm('发布后这道题会立刻出现在相关学生的课堂页面上，确定发布吗？')) return
   checkBusy.value = true
   try {
     await approveCheck(String(route.params.sessionId), selectedCheck.value.id)
@@ -291,6 +316,7 @@ async function publishCheck() {
 
 async function finishCheck() {
   if (!selectedCheck.value) return
+  if (!window.confirm('结束检测后学生将无法继续作答，已提交的答案会保留。确定结束吗？')) return
   checkBusy.value = true
   try {
     await closeCheck(String(route.params.sessionId), selectedCheck.value.id)
@@ -317,7 +343,7 @@ onBeforeUnmount(() => {
     <section v-if="!snapshot" class="surface page-state">
       <p class="eyebrow">教师工作台</p>
       <h1>{{ loading ? '正在加载课堂…' : '无法打开教师工作台' }}</h1>
-      <p>{{ loading ? '正在读取课堂信息，请稍候。' : error || '请从教师专属入口重新进入课堂。' }}</p>
+      <p>{{ loading ? '正在读取课堂信息，请稍候。' : error || '请从教师课堂中心重新进入。' }}</p>
       <RouterLink v-if="missingTeacherAccess" class="button-link" to="/">返回首页创建课堂</RouterLink>
       <button v-else-if="!loading" @click="refresh">重新加载</button>
     </section>
@@ -333,9 +359,11 @@ onBeforeUnmount(() => {
     </section>
 
     <section v-if="snapshot?.status !== 'ended' && joinCode" class="surface classroom-access-panel">
-      <div><p class="eyebrow">学生入口</p><strong>课堂码 {{ joinCode }}</strong><small>将学生入口或课堂码发给学生，即可加入本堂课。</small></div>
+      <div><p class="eyebrow">学生入口</p><strong>课堂码 {{ joinCode }}</strong><small>学生打开统一学生端，输入课堂码和访问名称即可加入。</small></div>
       <div class="classroom-access-actions">
-        <a :href="studentJoinUrl" target="_blank" rel="noreferrer">打开学生入口</a>
+        <input v-model="joinCodeDraft" maxlength="12" aria-label="设置课堂码" placeholder="设置课堂码" />
+        <button type="button" :disabled="savingJoinCode || joinCodeDraft.trim().length < 4" @click="saveJoinCode">{{ savingJoinCode ? '保存中…' : '保存课堂码' }}</button>
+        <a :href="studentJoinUrl" target="_blank" rel="noreferrer">打开学生端</a>
         <button type="button" :disabled="copilotState === 'waiting'" @click="connectCopilot">{{ copilotState === 'waiting' ? '正在连接…' : copilotState === 'connected' ? '开播助手已连接' : '连接开播助手' }}</button>
       </div>
       <p v-if="copilotState === 'connected'" class="copilot-success">连接成功。开播页面右下角的 QP 助手会显示本课堂疑问。</p>
@@ -390,6 +418,13 @@ onBeforeUnmount(() => {
           </template>
           <button v-else-if="selected.status === 'awaiting_feedback'" :disabled="checkBusy" @click="createCheck">生成理解检测题</button>
           <p v-else-if="!selectedCheck" class="mode-note">结束本轮讲解并进入反馈阶段后，可生成一道检测题。</p>
+          <details v-if="pastChecks.length" class="past-checks">
+            <summary>前几轮的检测（{{ pastChecks.length }} 道）</summary>
+            <div v-for="item in pastChecks" :key="item.id" class="past-check-row">
+              <p class="check-stem">第 {{ item.feedback_round }} 轮 · {{ item.stem }}</p>
+              <p class="mode-note">作答 {{ item.response_count }}/{{ item.target_count }} · 正确 {{ item.correct_count }} · {{ item.status === 'closed' ? '已结束' : item.status === 'active' ? '答题中' : '待审核' }}</p>
+            </div>
+          </details>
         </section>
       </aside>
     </div>

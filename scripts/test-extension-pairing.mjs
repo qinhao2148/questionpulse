@@ -11,18 +11,26 @@ function createHarness() {
   const posted = []
   const stored = []
   const window = {
-    location: { origin: 'http://127.0.0.1:5173' },
+    location: { origin: 'http://127.0.0.1:5173', pathname: '/' },
+    // The pairing script also mirrors the console's localStorage token. Keep it
+    // empty here so these cases still assert the explicit message path only.
+    localStorage: { getItem: () => null },
     addEventListener(type, listener) { listeners.set(type, listener) },
     postMessage(message, targetOrigin) { posted.push({ message, targetOrigin }) },
   }
   const chrome = {
     storage: {
       session: {
+        async get() { return {} },
         async set(value) { stored.push(value) },
       },
     },
   }
-  vm.runInNewContext(source, { window, chrome, Set, String, Error }, { filename: pairingPath })
+  vm.runInNewContext(
+    source,
+    { window, chrome, Set, String, Error, setInterval: () => 0, clearInterval: () => {} },
+    { filename: pairingPath },
+  )
   const listener = listeners.get('message')
   assert.equal(typeof listener, 'function', 'pairing listener must be registered')
   return { window, listener, posted, stored }
@@ -35,8 +43,9 @@ function validMessage() {
     requestId: '11111111-1111-4111-8111-111111111111',
     payload: {
       apiBaseUrl: 'http://127.0.0.1:8000/api/v1',
+      webBaseUrl: 'http://127.0.0.1:5173',
       sessionId: '22222222-2222-4222-8222-222222222222',
-      teacherToken: `qpt_${'A'.repeat(40)}`,
+      teacherToken: `qpa_${'1'.repeat(10)}_${'A'.repeat(64)}`,
     },
   }
 }
@@ -50,6 +59,7 @@ function validMessage() {
   })
   assert.equal(harness.stored.length, 1)
   assert.equal(harness.stored[0].apiBaseUrl, validMessage().payload.apiBaseUrl)
+  assert.equal(harness.stored[0].webBaseUrl, validMessage().payload.webBaseUrl)
   assert.equal(harness.stored[0].sessionId, validMessage().payload.sessionId)
   assert.equal(harness.stored[0].teacherToken, validMessage().payload.teacherToken)
   assert.equal(harness.posted.length, 1)
@@ -72,6 +82,34 @@ function validMessage() {
   const harness = createHarness()
   const message = validMessage()
   message.payload.apiBaseUrl = 'https://attacker.example/api/v1'
+  await harness.listener({
+    source: harness.window,
+    origin: 'http://127.0.0.1:5173',
+    data: message,
+  })
+  assert.equal(harness.stored.length, 0)
+  assert.equal(harness.posted[0].message.ok, false)
+  assert.equal(harness.posted[0].message.error, 'invalid_pairing_payload')
+}
+
+{
+  const harness = createHarness()
+  const message = validMessage()
+  message.payload.webBaseUrl = 'https://attacker.example'
+  await harness.listener({
+    source: harness.window,
+    origin: 'http://127.0.0.1:5173',
+    data: message,
+  })
+  assert.equal(harness.stored.length, 0)
+  assert.equal(harness.posted[0].message.ok, false)
+  assert.equal(harness.posted[0].message.error, 'invalid_pairing_payload')
+}
+
+{
+  const harness = createHarness()
+  const message = validMessage()
+  message.payload.teacherToken = `qpt_${'A'.repeat(40)}`
   await harness.listener({
     source: harness.window,
     origin: 'http://127.0.0.1:5173',

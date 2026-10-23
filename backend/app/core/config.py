@@ -1,7 +1,12 @@
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_TEACHER_PORTAL_SECRET = "questionpulse-local-teacher-portal"
+DEFAULT_TEACHER_PASSWORD = "123456"
+DEFAULT_PSEUDONYM_KEY = "questionpulse-development-pseudonym-key"
+DEVELOPMENT_ENVIRONMENTS = {"development", "dev", "local", "test"}
 
 
 class Settings(BaseSettings):
@@ -28,7 +33,11 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 15.0
     llm_max_output_tokens: int = 1200
     access_token_ttl_hours: int = 72
-    participant_pseudonym_key: str = "questionpulse-development-pseudonym-key"
+    teacher_portal_ttl_hours: int = 24
+    participant_pseudonym_key: str = DEFAULT_PSEUDONYM_KEY
+    teacher_username: str = "0"
+    teacher_password: str = DEFAULT_TEACHER_PASSWORD
+    teacher_portal_secret: str = DEFAULT_TEACHER_PORTAL_SECRET
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -46,6 +55,25 @@ class Settings(BaseSettings):
     @classmethod
     def default_llm_model(cls, value: object) -> object:
         return value or "deepseek-flash"
+
+    @model_validator(mode="after")
+    def reject_development_credentials_in_production(self) -> "Settings":
+        """Refuse to boot outside development with shipped default credentials."""
+        if self.app_env.strip().lower() in DEVELOPMENT_ENVIRONMENTS:
+            return self
+        weak: list[str] = []
+        if self.teacher_password == DEFAULT_TEACHER_PASSWORD or len(self.teacher_password) < 12:
+            weak.append("TEACHER_PASSWORD")
+        if self.teacher_portal_secret == DEFAULT_TEACHER_PORTAL_SECRET:
+            weak.append("TEACHER_PORTAL_SECRET")
+        if self.participant_pseudonym_key == DEFAULT_PSEUDONYM_KEY:
+            weak.append("PARTICIPANT_PSEUDONYM_KEY")
+        if weak:
+            raise ValueError(
+                "development default credentials are not allowed when "
+                f"APP_ENV={self.app_env}: {', '.join(weak)}"
+            )
+        return self
 
 
 @lru_cache

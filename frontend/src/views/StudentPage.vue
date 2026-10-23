@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import {
@@ -7,7 +7,6 @@ import {
   fetchStudentChecks,
   fetchStudentSnapshot,
   getStudentParticipant,
-  joinClassroom,
   rememberStudentClassroom,
   sendFeedback,
   submitQuestion,
@@ -40,6 +39,7 @@ let reconnectTimer: number | undefined
 const question = ref('')
 const submitted = ref(false)
 const sendingFeedback = ref(false)
+const feedbackError = ref('')
 const active = computed(() => snapshot.value?.status === 'ended'
   ? undefined
   : snapshot.value?.clusters.find(
@@ -47,6 +47,7 @@ const active = computed(() => snapshot.value?.status === 'ended'
   ))
 const sessionEnded = computed(() => snapshot.value?.status === 'ended')
 const myClassroomTopics = computed(() => snapshot.value?.clusters.filter((item) => item.questions.length > 0) || [])
+const myPendingQuestions = computed(() => snapshot.value?.pending_questions || [])
 const streamEnded = computed(() => polyvStatus.value === 'ended')
 const questionInputClosed = computed(() => sessionEnded.value || streamEnded.value)
 const stageBadgeLabel = computed(() => {
@@ -70,14 +71,12 @@ const stageState = computed(() => sessionEnded.value
   : playerStarted.value ? 'player' : 'placeholder')
 let refreshTimer: number | undefined
 
+watch(() => active.value?.id, () => { feedbackError.value = '' })
+
 async function refresh() {
   if (!participantId.value) return
   snapshot.value = await fetchStudentSnapshot(sessionId.value)
-  rememberStudentClassroom(
-    sessionId.value,
-    snapshot.value.title,
-    String(route.query.code || sessionStorage.getItem(`questionpulse.student_join_code.${sessionId.value}`) || ''),
-  )
+  rememberStudentClassroom(sessionId.value, snapshot.value.title)
   checks.value = sessionEnded.value ? [] : await fetchStudentChecks(sessionId.value)
   await nextTick()
   if (sessionEnded.value) {
@@ -147,20 +146,12 @@ async function connect() {
       viewerKey = crypto.randomUUID()
       localStorage.setItem('questionpulse.viewer_key', viewerKey)
     }
-    const joinCode = String(route.query.code || sessionStorage.getItem(`questionpulse.student_join_code.${sessionId.value}`) || '')
-    if (joinCode) sessionStorage.setItem(`questionpulse.student_join_code.${sessionId.value}`, joinCode)
     participantId.value = getStudentParticipant(sessionId.value)
     if (!participantId.value) {
-      participantId.value = (await joinClassroom(sessionId.value, viewerKey, joinCode)).participant_id
+      throw new Error('请先返回学生端，输入课堂码和访问名称加入课堂')
     }
     await nextTick()
-    try {
-      await refresh()
-    } catch (error) {
-      if (!joinCode) throw error
-      participantId.value = (await joinClassroom(sessionId.value, viewerKey, joinCode)).participant_id
-      await refresh()
-    }
+    await refresh()
     refreshTimer = window.setInterval(refresh, 3000)
   } catch (error) {
     connectionError.value = error instanceof Error ? error.message : '无法连接课堂'
@@ -201,6 +192,7 @@ async function sendQuestion() {
 async function respond(result: 'understood' | 'still_confused') {
   if (!active.value || !participantId.value) return
   sendingFeedback.value = true
+  feedbackError.value = ''
   try {
     await sendFeedback(
       sessionId.value,
@@ -211,7 +203,9 @@ async function respond(result: 'understood' | 'still_confused') {
     )
     await refresh()
   } catch (error) {
-    connectionError.value = error instanceof Error ? error.message : '反馈失败'
+    // Show the failure next to the buttons; a request rejected with
+    // participant_not_feedback_target used to surface only in the question card.
+    feedbackError.value = error instanceof Error ? error.message : '反馈失败'
   } finally {
     sendingFeedback.value = false
   }
@@ -267,8 +261,16 @@ onUnmounted(() => {
       </section>
       <section v-else class="surface pulse-card student-review">
         <p class="eyebrow">课堂回顾</p><h2>我的课堂记录</h2>
-        <div v-for="topic in myClassroomTopics" :key="topic.id" class="review-topic"><strong>{{ topic.title }}</strong><p v-for="item in topic.questions" :key="item.id">我的提问：{{ item.content }}</p><span v-if="topic.feedback.my_result">理解反馈：{{ topic.feedback.my_result === 'understood' ? '已理解' : '仍困惑' }}</span></div>
-        <p v-if="!myClassroomTopics.length">本堂课没有你的提问记录。</p>
+        <div v-for="topic in myClassroomTopics" :key="topic.id" class="review-topic">
+          <strong>{{ topic.title }}</strong>
+          <p v-for="item in topic.questions" :key="item.id">我的提问：{{ item.content }}</p>
+          <span v-for="round in topic.feedback_history" :key="round.round" v-show="round.my_result">第 {{ round.round }} 轮理解反馈：{{ round.my_result === 'understood' ? '已理解' : '仍困惑' }}</span>
+        </div>
+        <div v-if="myPendingQuestions.length" class="review-topic">
+          <strong>其他提问</strong>
+          <p v-for="item in myPendingQuestions" :key="item.id">我的提问：{{ item.content }}（未归入疑问主题）</p>
+        </div>
+        <p v-if="!myClassroomTopics.length && !myPendingQuestions.length">本堂课没有你的提问记录。</p>
         <RouterLink class="button-link" to="/student">返回我的课堂</RouterLink>
       </section>
 
@@ -281,6 +283,7 @@ onUnmounted(() => {
           <button :disabled="sendingFeedback" :class="{ selected: active.feedback.my_result === 'still_confused' }" @click="respond('still_confused')">? 仍困惑</button>
         </div>
         <p v-if="active.feedback.my_result" class="success-note">反馈已保存，可在本轮结束前修改。</p>
+        <p v-if="feedbackError" class="error-note">{{ feedbackError }}</p>
       </section>
       <section v-for="check in checks" :key="check.id" class="surface pulse-card check-card">
         <div class="card-row"><span class="status awaiting_feedback">理解检测</span><span>{{ check.response_count }}/{{ check.target_count }} 已答</span></div>

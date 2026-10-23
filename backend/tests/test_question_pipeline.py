@@ -7,8 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.api.routes import classroom as classroom_routes
-from app.api.routes.classroom import confusion_signal, is_current_classroom_event
+from app.api.routes import questions as question_routes
+from app.api.routes import sessions as session_routes
+from app.api.routes.shared import confusion_signal, is_current_classroom_event
+from app.core.auth import teacher_portal_token
+from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.integrations.base import NormalizedQuestion
@@ -24,6 +27,12 @@ engine = create_async_engine(
 session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
 
+def teacher_portal_headers() -> dict[str, str]:
+    settings = get_settings()
+    token = teacher_portal_token(settings.teacher_username, settings.teacher_portal_secret)
+    return {"Authorization": f"Bearer {token}"}
+
+
 class RoleAwareTestClient(TestClient):
     """Keeps existing workflow tests concise while exercising real bearer credentials."""
 
@@ -36,6 +45,10 @@ class RoleAwareTestClient(TestClient):
         match = re.search(r"/sessions/([^/?]+)", str(url))
         session_id = match.group(1) if match else None
         payload = kwargs.get("json") or {}
+        if method.upper() == "POST" and str(url).endswith("/sessions"):
+            headers = dict(kwargs.get("headers") or {})
+            headers.update({**teacher_portal_headers(), **headers})
+            kwargs["headers"] = headers
         if session_id and session_id in self.classrooms:
             classroom = self.classrooms[session_id]
             if str(url).endswith("/join"):
@@ -211,6 +224,47 @@ def test_local_question_pipeline_is_idempotent_and_clustered() -> None:
     app.dependency_overrides.clear()
 
 
+def test_repeated_identical_submission_reuses_the_cluster() -> None:
+    """Two clicks from one student must land in one cluster, not two.
+
+    The original report was a student double-clicking: two submissions arrived
+    two seconds apart with the same text, and each created its own cluster
+    because the second one could not see the first, which was still inside an
+    uncommitted transaction.
+    """
+    asyncio.run(reset_database())
+    app.dependency_overrides[get_db] = override_db
+    client = RoleAwareTestClient(app)
+
+    session_id = client.post("/api/v1/sessions", json={"title": "数据库实战"}).json()["data"]["id"]
+    participant_id = client.post(
+        f"/api/v1/sessions/{session_id}/join", json={"viewer_key": "double-click"}
+    ).json()["data"]["participant_id"]
+
+    def submit(request_id: str) -> dict:
+        return client.post(
+            f"/api/v1/sessions/{session_id}/questions",
+            json={
+                "participant_id": participant_id,
+                "client_request_id": request_id,
+                "content": "数据库应该如何规范书写",
+            },
+        ).json()["data"]
+
+    first = submit("click-1")
+    second = submit("click-2")
+
+    assert second["id"] != first["id"]
+    assert second["cluster_id"] == first["cluster_id"]
+    assert second["assignment_method"] == "semantic_high_confidence"
+
+    snapshot = client.get(f"/api/v1/sessions/{session_id}/snapshot").json()
+    assert len(snapshot["clusters"]) == 1
+    assert snapshot["clusters"][0]["question_count"] == 2
+
+    app.dependency_overrides.clear()
+
+
 def test_embedding_failure_keeps_question_pending(monkeypatch) -> None:
     asyncio.run(reset_database())
     app.dependency_overrides[get_db] = override_db
@@ -223,7 +277,7 @@ def test_embedding_failure_keeps_question_pending(monkeypatch) -> None:
     def fail_embedding(_: str) -> list[float]:
         raise RuntimeError("embedding_unavailable")
 
-    monkeypatch.setattr("app.api.routes.classroom.embed", fail_embedding)
+    monkeypatch.setattr("app.api.routes.shared.embed", fail_embedding)
     response = client.post(
         f"/api/v1/sessions/{session_id}/questions",
         json={
@@ -323,6 +377,7 @@ def test_state_feedback_and_report_loop() -> None:
         "still_confused": 1,
         "my_result": "still_confused",
     }
+    assert student_snapshot["clusters"][0]["feedback_history"] == [summary]
 
     late_participant = client.post(
         f"/api/v1/sessions/{session_id}/join", json={"viewer_key": "loop-late"}
@@ -494,7 +549,7 @@ def test_live_sync_skips_external_ids_seen_on_same_channel(monkeypatch) -> None:
             occurred_at=datetime.now(UTC),
         )]
 
-    monkeypatch.setattr(classroom_routes.PolyvQuestionAdapter, "fetch_questions", repeated_history)
+    monkeypatch.setattr(question_routes.PolyvQuestionAdapter, "fetch_questions", repeated_history)
     synced = client.post(
         f"/api/v1/sessions/{second['id']}/integrations/polyv/sync",
         json={"channel_id": "reused-channel"},
@@ -643,12 +698,256 @@ def test_formative_check_is_reviewed_targeted_and_frozen_after_class() -> None:
     app.dependency_overrides.clear()
 
 
+def test_named_student_receives_feedback_and_check_without_asking() -> None:
+    """Every named student is a valid audience, not only the question authors.
+
+    POLYV sync can mint a shadow participant without a display name for the same
+    human, so audience rows built from question authors alone left the real
+    student unable to submit feedback and invisible to the generated check.
+    """
+    asyncio.run(reset_database())
+    app.dependency_overrides[get_db] = override_db
+    client = RoleAwareTestClient(app)
+    classroom = client.post("/api/v1/sessions", json={"title": "全员检测"}).json()["data"]
+    session_id = classroom["id"]
+    asker = client.post(
+        f"/api/v1/sessions/{session_id}/join",
+        json={"viewer_key": "asker-key", "display_name": "提问者"},
+    ).json()["data"]
+    listener = client.post(
+        f"/api/v1/sessions/{session_id}/join",
+        json={"viewer_key": "listener-key", "display_name": "旁听生"},
+    ).json()["data"]
+    shadow = client.post(
+        f"/api/v1/sessions/{session_id}/join", json={"viewer_key": "shadow-key"}
+    ).json()["data"]
+
+    question = client.post(
+        f"/api/v1/sessions/{session_id}/questions",
+        json={
+            "participant_id": asker["participant_id"],
+            "client_request_id": "audience-source",
+            "content": "递归的退出条件怎样判断？",
+        },
+    ).json()["data"]
+    cluster_id = question["cluster_id"]
+    snapshot = client.get(f"/api/v1/sessions/{session_id}/teacher-snapshot").json()
+    version = snapshot["clusters"][0]["version"]
+    for state in ("addressing", "awaiting_feedback"):
+        changed = client.patch(
+            f"/api/v1/sessions/{session_id}/clusters/{cluster_id}/status",
+            json={"status": state, "expected_version": version},
+        )
+        assert changed.status_code == 200
+        version = changed.json()["data"]["version"]
+
+    listener_headers = {"Authorization": f"Bearer {listener['access_token']}"}
+    shadow_headers = {"Authorization": f"Bearer {shadow['access_token']}"}
+    feedback_url = f"/api/v1/sessions/{session_id}/clusters/{cluster_id}/feedback"
+    accepted = client.put(
+        feedback_url,
+        headers=listener_headers,
+        json={
+            "participant_id": listener["participant_id"],
+            "round": 1,
+            "result": "understood",
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert client.put(
+        feedback_url,
+        headers=shadow_headers,
+        json={
+            "participant_id": shadow["participant_id"],
+            "round": 1,
+            "result": "understood",
+        },
+    ).status_code == 403
+
+    check = client.post(
+        f"/api/v1/sessions/{session_id}/clusters/{cluster_id}/checks/generate"
+    ).json()
+    approved = client.post(f"/api/v1/sessions/{session_id}/checks/{check['id']}/approve")
+    assert approved.status_code == 200
+    delivered = client.get(
+        f"/api/v1/sessions/{session_id}/checks/active", headers=listener_headers
+    ).json()
+    assert len(delivered) == 1
+    assert delivered[0]["id"] == check["id"]
+    assert delivered[0]["target_count"] == 2
+    assert client.get(
+        f"/api/v1/sessions/{session_id}/checks/active", headers=shadow_headers
+    ).json() == []
+    app.dependency_overrides.clear()
+
+
+def test_second_feedback_round_can_generate_another_check() -> None:
+    """The same cluster must be able to run a new check in round two.
+
+    Both the console and the extension matched a check by cluster id alone, so
+    round two kept pointing at round one's finished check and the "生成检测"
+    entry point disappeared for the rest of the lesson.
+    """
+    asyncio.run(reset_database())
+    app.dependency_overrides[get_db] = override_db
+    client = RoleAwareTestClient(app)
+    classroom = client.post("/api/v1/sessions", json={"title": "两轮检测"}).json()["data"]
+    session_id = classroom["id"]
+    student = client.post(
+        f"/api/v1/sessions/{session_id}/join",
+        json={"viewer_key": "two-round", "display_name": "小明"},
+    ).json()["data"]
+    question = client.post(
+        f"/api/v1/sessions/{session_id}/questions",
+        json={
+            "participant_id": student["participant_id"],
+            "client_request_id": "round-source",
+            "content": "递归的退出条件怎样判断？",
+        },
+    ).json()["data"]
+    cluster_id = question["cluster_id"]
+
+    def move(status: str) -> None:
+        current = client.get(f"/api/v1/sessions/{session_id}/teacher-snapshot").json()
+        version = next(item["version"] for item in current["clusters"] if item["id"] == cluster_id)
+        changed = client.patch(
+            f"/api/v1/sessions/{session_id}/clusters/{cluster_id}/status",
+            json={"status": status, "expected_version": version},
+        )
+        assert changed.status_code == 200, changed.text
+
+    move("addressing")
+    move("awaiting_feedback")
+    first = client.post(
+        f"/api/v1/sessions/{session_id}/clusters/{cluster_id}/checks/generate"
+    ).json()
+    assert first["feedback_round"] == 1
+    assert client.post(
+        f"/api/v1/sessions/{session_id}/checks/{first['id']}/approve"
+    ).status_code == 200
+
+    move("closed")
+    move("open")
+    move("addressing")
+    move("awaiting_feedback")
+    second = client.post(
+        f"/api/v1/sessions/{session_id}/clusters/{cluster_id}/checks/generate"
+    ).json()
+    assert second["feedback_round"] == 2
+    assert second["id"] != first["id"]
+    assert second["status"] == "draft"
+    history = client.get(f"/api/v1/sessions/{session_id}/checks").json()
+    assert {item["feedback_round"] for item in history} == {1, 2}
+    app.dependency_overrides.clear()
+
+
+def test_second_join_keeps_earlier_tab_token_alive() -> None:
+    """同一浏览器开两个标签页，先后加入不应把先开的那个踢掉。"""
+    asyncio.run(reset_database())
+    app.dependency_overrides[get_db] = override_db
+    client = RoleAwareTestClient(app)
+    classroom = client.post("/api/v1/sessions", json={"title": "多标签页"}).json()["data"]
+    session_id = classroom["id"]
+    payload = {
+        "join_code": classroom["join_code"],
+        "display_name": "小明",
+        "viewer_key": "same-browser",
+    }
+    first = client.post("/api/v1/student/join", json=payload).json()["data"]
+    second = client.post("/api/v1/student/join", json=payload).json()["data"]
+    assert first["participant_id"] == second["participant_id"]
+    assert first["access_token"] != second["access_token"]
+    for token in (first["access_token"], second["access_token"]):
+        snapshot = client.get(
+            f"/api/v1/sessions/{session_id}/student-snapshot",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert snapshot.status_code == 200
+    asked = client.post(
+        f"/api/v1/sessions/{session_id}/questions",
+        headers={"Authorization": f"Bearer {first['access_token']}"},
+        json={
+            "participant_id": first["participant_id"],
+            "client_request_id": "old-tab-ask",
+            "content": "先打开的标签页还能提问吗？",
+        },
+    )
+    assert asked.status_code == 202
+    app.dependency_overrides.clear()
+
+
+def test_report_separates_viewers_from_askers() -> None:
+    """观看人数取学生端名册，提问人数只统计其中提过问的人。"""
+    asyncio.run(reset_database())
+    app.dependency_overrides[get_db] = override_db
+    client = RoleAwareTestClient(app)
+    classroom = client.post("/api/v1/sessions", json={"title": "到课分析"}).json()["data"]
+    session_id = classroom["id"]
+    joined = []
+    for index, name in enumerate(("小明", "小红", "小刚")):
+        joined.append(
+            client.post(
+                "/api/v1/student/join",
+                json={
+                    "join_code": classroom["join_code"],
+                    "display_name": name,
+                    "viewer_key": f"viewer-{index}",
+                },
+            ).json()["data"]
+        )
+    for index, student in enumerate(joined):
+        assert (
+            client.get(
+                f"/api/v1/sessions/{session_id}/student-snapshot",
+                headers={"Authorization": f"Bearer {student['access_token']}"},
+            ).status_code
+            == 200
+        )
+        if index < 2:
+            asked = client.post(
+                f"/api/v1/sessions/{session_id}/questions",
+                json={
+                    "participant_id": student["participant_id"],
+                    "client_request_id": f"ask-{index}",
+                    "content": ("索引为什么会失效？", "事务回滚后自增主键会回退吗？")[index],
+                },
+            )
+            assert asked.status_code == 202
+
+    # 直播平台同步提问时派生的影子身份，不应计入观看人数。
+    async def add_shadow() -> None:
+        async with session_factory() as db:
+            db.add(
+                Participant(
+                    session_id=session_id,
+                    viewer_key="polyv-shadow",
+                    display_name=None,
+                    source="polyv",
+                )
+            )
+            await db.commit()
+
+    asyncio.run(add_shadow())
+
+    report = client.get(f"/api/v1/sessions/{session_id}/report").json()
+    assert report["viewer_count"] == 3
+    assert report["active_viewer_count"] == 3
+    assert report["asker_count"] == 2
+    assert report["silent_viewer_count"] == 1
+    assert report["ask_rate"] == round(2 / 3, 4)
+    assert report["participant_count"] == report["asker_count"]
+    app.dependency_overrides.clear()
+
+
 def test_role_boundaries_reject_cross_role_access(monkeypatch) -> None:
     asyncio.run(reset_database())
     app.dependency_overrides[get_db] = override_db
     client = TestClient(app)
 
-    classroom = client.post("/api/v1/sessions", json={"title": "权限边界"}).json()["data"]
+    portal_headers = teacher_portal_headers()
+    classroom = client.post(
+        "/api/v1/sessions", headers=portal_headers, json={"title": "权限边界"}
+    ).json()["data"]
     session_id = classroom["id"]
     teacher_headers = {"Authorization": f"Bearer {classroom['teacher_token']}"}
 
@@ -681,10 +980,10 @@ def test_role_boundaries_reject_cross_role_access(monkeypatch) -> None:
     assert student_snapshot.status_code == 200
     assert all("ai_semantic_reason" not in item for item in student_snapshot.json()["clusters"])
     assert all("ai_normalized_intent" in item for item in teacher_snapshot.json()["clusters"])
-    expired_settings = classroom_routes.get_settings().model_copy(
+    expired_settings = session_routes.get_settings().model_copy(
         update={"access_token_ttl_hours": 0}
     )
-    monkeypatch.setattr(classroom_routes, "get_settings", lambda: expired_settings)
+    monkeypatch.setattr(session_routes, "get_settings", lambda: expired_settings)
     expired_student = client.post(
         f"/api/v1/sessions/{session_id}/join",
         json={"viewer_key": "expired-student", "join_code": classroom["join_code"]},
@@ -695,4 +994,55 @@ def test_role_boundaries_reject_cross_role_access(monkeypatch) -> None:
     )
     assert expired_snapshot.status_code == 403
     assert expired_snapshot.json()["detail"] == "access_expired"
+    app.dependency_overrides.clear()
+
+
+def test_teacher_login_lists_all_classroom_history() -> None:
+    asyncio.run(reset_database())
+    app.dependency_overrides[get_db] = override_db
+    client = TestClient(app)
+    portal_headers = teacher_portal_headers()
+    first = client.post(
+        "/api/v1/sessions", headers=portal_headers, json={"title": "第一堂课"}
+    ).json()["data"]
+    second = client.post(
+        "/api/v1/sessions", headers=portal_headers, json={"title": "第二堂课"}
+    ).json()["data"]
+    client.post(
+        f"/api/v1/sessions/{first['id']}/end",
+        headers={"Authorization": f"Bearer {first['teacher_token']}"},
+    )
+
+    rejected = client.post(
+        "/api/v1/teacher/login", json={"username": "0", "password": "wrong"}
+    )
+    assert rejected.status_code == 403
+    login = client.post(
+        "/api/v1/teacher/login", json={"username": "0", "password": "123456"}
+    )
+    assert login.status_code == 200
+    headers = {"Authorization": f"Bearer {login.json()['data']['access_token']}"}
+    history = client.get("/api/v1/teacher/sessions", headers=headers)
+    assert history.status_code == 200
+    assert {item["title"] for item in history.json()} == {"第一堂课", "第二堂课"}
+    assert {item["status"] for item in history.json()} == {"live", "ended"}
+    assert client.get(
+        f"/api/v1/sessions/{second['id']}/teacher-snapshot", headers=headers
+    ).status_code == 200
+    updated_code = client.patch(
+        f"/api/v1/sessions/{second['id']}/join-code",
+        headers=headers,
+        json={"join_code": "MATH2026"},
+    )
+    assert updated_code.status_code == 200
+    student_entry = client.post(
+        "/api/v1/student/join",
+        json={
+            "join_code": "math2026",
+            "display_name": "小明",
+            "viewer_key": "named-student",
+        },
+    )
+    assert student_entry.status_code == 200
+    assert student_entry.json()["data"]["session_id"] == second["id"]
     app.dependency_overrides.clear()

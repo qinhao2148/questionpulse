@@ -52,7 +52,7 @@ heikeson/
 
 ```powershell
 ./scripts/start-demo.ps1   # 启动 MySQL、迁移、前后端并创建新课堂
-./scripts/open-demo-teacher.ps1 # 从私有运行时文件打开教师端，不在终端显示令牌
+./scripts/open-demo-teacher.ps1 # 打开教师登录页
 ./scripts/reset-demo.ps1   # 保留旧证据并创建一间全新演示课堂
 ./scripts/stop-demo.ps1    # 关闭前后端，MySQL 保持运行
 ```

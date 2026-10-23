@@ -26,6 +26,7 @@
       .qp-hidden { display: none !important; }
       .qp-header { position: sticky; top: 0; z-index: 2; padding: 18px 18px 14px; background: #130d1bdd; backdrop-filter: blur(14px); border-bottom: 1px solid #ffffff12; display: flex; justify-content: space-between; gap: 12px; align-items: center; cursor: grab; touch-action: none; }
       .qp-brand { display: flex; gap: 10px; align-items: center; }
+      .qp-brand small { display: block; max-width: 195px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .qp-mini-orb { width: 30px; height: 30px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #d7c7ff, #7f4bd8 40%, #27143f 80%); box-shadow: 0 0 20px #8d5de977; }
       .qp-header strong, .qp-card strong { display: block; }
       .qp-header small, .qp-muted { color: #a89db2; font-size: 12px; }
@@ -51,6 +52,11 @@
       .qp-form input { width: 100%; border: 1px solid #ffffff1f; border-radius: 9px; background: #08060b; color: white; padding: 9px 10px; }
       .qp-error { color: #ff94ab; font-size: 12px; white-space: pre-wrap; }
       .qp-empty { color: #a89db2; text-align: center; padding: 16px 4px; }
+      .qp-status.qp-ended { color: #a89db2; }
+      .qp-status.qp-ended::before { background: #7c7385; box-shadow: none; }
+      .qp-links { display: flex; gap: 7px; align-items: center; }
+      a.qp-button { text-decoration: none; display: inline-flex; align-items: center; }
+      .qp-note { color: #e2c98d; font-size: 12px; margin-top: 8px; }
       @keyframes qp-pulse { 0% { transform: scale(.72); opacity: .85; } 75%,100% { transform: scale(1.25); opacity: 0; } }
       @media (prefers-reduced-motion: reduce) { .qp-orb::after { animation: none; } }
     </style>
@@ -75,6 +81,11 @@
   let checks = []
   let suppressOpen = false
   let showAllClusters = false
+  let settingsCache = null
+  let followAttempted = false
+  let followedTitle = ''
+  let followNoticeShown = false
+  let loginWatch
 
   function stopPolling() {
     clearInterval(timer)
@@ -84,6 +95,21 @@
   function startPolling() {
     stopPolling()
     if (!panel.classList.contains('qp-hidden')) timer = setInterval(refresh, 3000)
+  }
+
+  // After a re-login the extension picks up the new token on its own. Keep
+  // retrying quietly so the panel heals without the teacher pressing anything.
+  function startLoginWatch() {
+    if (loginWatch) return
+    loginWatch = setInterval(() => {
+      if (panel.classList.contains('qp-hidden') || document.hidden) return
+      refresh()
+    }, 4000)
+  }
+
+  function stopLoginWatch() {
+    clearInterval(loginWatch)
+    loginWatch = undefined
   }
 
   function setConnectionState(connected) {
@@ -154,9 +180,12 @@
   const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character])
 
   async function config() {
-    const saved = await storageGet(['apiBaseUrl', 'sessionId', 'teacherToken'])
+    const saved = await storageGet(['apiBaseUrl', 'webBaseUrl', 'sessionId', 'teacherToken'])
+    const apiBaseUrl = saved.apiBaseUrl || 'http://127.0.0.1:8000/api/v1'
     return {
-      apiBaseUrl: saved.apiBaseUrl || 'http://127.0.0.1:8000/api/v1',
+      apiBaseUrl,
+      webBaseUrl: saved.webBaseUrl
+        || apiBaseUrl.replace(/\/api\/v1\/?$/, '').replace(/:8000$/, ':5173'),
       sessionId: saved.sessionId || '',
       teacherToken: saved.teacherToken || '',
     }
@@ -186,9 +215,115 @@
     return states[cluster.status] || null
   }
 
+  function teacherUrl() {
+    const base = settingsCache?.webBaseUrl || 'http://127.0.0.1:5173'
+    return settingsCache?.sessionId ? `${base}/teacher/${settingsCache.sessionId}` : `${base}/`
+  }
+
+  function teacherHomeUrl() {
+    return settingsCache?.webBaseUrl || 'http://127.0.0.1:5173'
+  }
+
+  function pageChannelId() {
+    const fromPath = location.pathname.match(/\/(?:watch|live|channel)\/(\d{5,})/i)
+    if (fromPath) return fromPath[1]
+    const fromQuery = location.search.match(/[?&](?:channelId|channel_id|channel)=(\d{5,})/i)
+    return fromQuery ? fromQuery[1] : ''
+  }
+
+  function pickLiveClassroom(rooms, channel) {
+    const live = (rooms || []).filter((room) => room.status === 'live')
+    if (!live.length) return null
+    const channelId = channel || pageChannelId()
+    const sameChannel = channelId ? live.find((room) => room.polyv_channel_id === channelId) : null
+    if (sameChannel) return sameChannel
+    // Only guess when there is exactly one live classroom. With several, stay
+    // put rather than silently showing a class the teacher is not teaching.
+    return live.length === 1 ? live[0] : null
+  }
+
+  async function adoptClassroom(target) {
+    followedTitle = target.title || ''
+    settingsCache = { ...(settingsCache || {}), sessionId: target.id }
+    showAllClusters = false
+    await storageSet({ sessionId: target.id })
+  }
+
+  function renderArchived() {
+    const clusters = snapshot?.clusters || []
+    const base = settingsCache?.webBaseUrl || 'http://127.0.0.1:5173'
+    count.classList.add('qp-hidden')
+    body.innerHTML = `
+      <section class="qp-card">
+        <div class="qp-row"><div><div class="qp-eyebrow">CLASSROOM ARCHIVED</div><strong>${escapeHtml(snapshot.title)}</strong></div><span class="qp-status qp-ended">已结束</span></div>
+        <div class="qp-meta">课堂已归档。${clusters.length} 个疑问主题停留在结束时刻，不再接收新问题。</div>
+      </section>
+      <section class="qp-card">
+        <div class="qp-eyebrow">STILL SHOWING THE LAST CLASS?</div>
+        <strong>助手还连着上一堂课</strong>
+        <p class="qp-muted">切到当前正在进行中的课堂，这里会重新加载实时疑问。教师令牌不需要重新输入。</p>
+        <div class="qp-actions">
+          <button class="qp-button primary" id="qp-switch">切换到当前课堂</button>
+          <a class="qp-button" href="${base}/report/${snapshot.id}" target="_blank" rel="noopener">查看课后报告</a>
+        </div>
+        <div class="qp-note qp-hidden" id="qp-switch-note"></div>
+      </section>
+      <section class="qp-card"><div class="qp-row"><span class="qp-muted">需要新建课堂或查看全部记录？</span><a class="qp-button" href="${teacherHomeUrl()}" target="_blank" rel="noopener">打开教师课堂中心</a></div></section>
+    `
+    root.getElementById('qp-switch')?.addEventListener('click', switchClassroom)
+  }
+
+  async function switchClassroom(event) {
+    const button = event.currentTarget
+    const note = root.getElementById('qp-switch-note')
+    button.disabled = true
+    try {
+      const rooms = await api('/teacher/sessions')
+      const live = pickLiveClassroom(rooms, snapshot?.polyv_channel_id)
+      if (!live) {
+        if (note) {
+          note.classList.remove('qp-hidden')
+          note.textContent = '当前没有进行中的课堂。请先在教师端创建并开始一堂课。'
+        }
+        button.disabled = false
+        return
+      }
+      await adoptClassroom(live)
+      followAttempted = true
+      followNoticeShown = false
+      await refresh()
+    } catch (error) {
+      renderError(error)
+    } finally {
+      button.disabled = false
+    }
+  }
+
+  async function endClassroom(event) {
+    const button = event.currentTarget
+    if (!window.confirm('确定结束这堂课吗？结束后学生无法继续提问，当前疑问会归档。')) return
+    button.disabled = true
+    try {
+      const settings = await config()
+      await api(`/sessions/${settings.sessionId}/end`, { method: 'POST', body: '{}' })
+      await refresh()
+    } catch (error) {
+      renderError(error)
+    } finally {
+      button.disabled = false
+    }
+  }
+
   function renderSnapshot() {
+    stopLoginWatch()
     setConnectionState(true)
-    if (snapshot?.status === 'ended') clearInterval(timer)
+    const subtitle = root.querySelector('.qp-brand small')
+    if (subtitle) subtitle.textContent = snapshot?.title ? `当前课堂：${snapshot.title}` : 'Teacher Copilot'
+    if (snapshot?.status === 'ended') {
+      clearInterval(timer)
+      renderArchived()
+      return
+    }
     const clusters = snapshot?.clusters || []
     const openClusters = clusters.filter((item) => item.status !== 'closed')
     const priorityClusters = [...openClusters].sort((a, b) => b.confusion_score - a.confusion_score)
@@ -196,6 +331,7 @@
     count.textContent = String(openClusters.length)
     count.classList.toggle('qp-hidden', openClusters.length === 0)
     body.innerHTML = `
+      ${followedTitle && !followNoticeShown ? `<section class="qp-card"><div class="qp-eyebrow">AUTO SWITCHED</div><div class="qp-meta">上一堂课《${escapeHtml(followedTitle)}》已结束，助手已自动切到当前课堂。</div></section>` : ''}
       <section class="qp-card">
         <div class="qp-row"><div><div class="qp-eyebrow">LIVE CLASSROOM</div><strong>${escapeHtml(snapshot.title)}</strong></div><span class="qp-status">${snapshot.status === 'ended' ? '已归档' : '已连接'}</span></div>
         <div class="qp-meta">${clusters.length} 个疑问簇 · ${snapshot.pending_questions.length} 条待处理</div>
@@ -205,7 +341,8 @@
         <div class="qp-list">
           ${visibleClusters.map((cluster) => {
             const action = nextAction(cluster)
-            const check = checks.find((item) => item.cluster_id === cluster.id)
+            const check = checks.find((item) => item.cluster_id === cluster.id
+              && item.feedback_round === cluster.feedback_round)
             return `<article class="qp-cluster">
               <div class="qp-row"><span class="qp-meta">${escapeHtml(cluster.status)}</span><span class="qp-meta">${cluster.participant_count} 人 · ${cluster.question_count} 条</span></div>
               <div class="qp-title">${escapeHtml(cluster.title)}</div>
@@ -221,9 +358,15 @@
         </div>
         ${priorityClusters.length > 3 ? `<div class="qp-actions"><button class="qp-button" id="qp-toggle-clusters">${showAllClusters ? '仅看 Top 3' : `查看全部 ${priorityClusters.length} 个待处理疑问`}</button></div>` : ''}
       </section>
-      <section class="qp-card"><div class="qp-row"><span class="qp-muted">完整配置、原始问题和报告请在教师后台查看。</span><button class="qp-button" id="qp-refresh">刷新</button></div></section>
+      <section class="qp-card">
+        <div class="qp-row"><span class="qp-muted">完整配置、原始问题和报告请在教师后台查看。</span><div class="qp-links"><a class="qp-button" href="${teacherUrl()}" target="_blank" rel="noopener">打开教师端</a><button class="qp-button" id="qp-refresh">刷新</button></div></div>
+        <div class="qp-meta" style="margin-top:10px">直播已经结束？结束这堂课会归档当前疑问，助手不再显示它。</div>
+        <div class="qp-actions"><button class="qp-button" id="qp-end">结束这堂课</button></div>
+      </section>
     `
+    if (followedTitle) followNoticeShown = true
     root.getElementById('qp-refresh')?.addEventListener('click', refresh)
+    root.getElementById('qp-end')?.addEventListener('click', endClassroom)
     root.getElementById('qp-toggle-clusters')?.addEventListener('click', () => {
       showAllClusters = !showAllClusters
       renderSnapshot()
@@ -234,17 +377,26 @@
     root.querySelectorAll('[data-close-check]').forEach((button) => button.addEventListener('click', closeCheck))
   }
 
-  function renderSetup(message = '') {
+  async function renderSetup(message = '', presetSessionId = '') {
     stopPolling()
+    stopLoginWatch()
     setConnectionState(false)
+    let saved = {}
+    try {
+      saved = await storageGet(['apiBaseUrl', 'sessionId'])
+    } catch {
+      saved = {}
+    }
+    const apiBaseUrl = saved.apiBaseUrl || 'http://127.0.0.1:8000/api/v1'
+    const sessionId = presetSessionId || saved.sessionId || ''
     body.innerHTML = `
       <section class="qp-card">
         <div class="qp-eyebrow">CONNECT CLASSROOM</div><strong>连接 QuestionPulse 课堂</strong>
-        <p class="qp-muted">凭据只保存在浏览器扩展本地，不会发送给 POLYV 页面。</p>
+        <p class="qp-muted">凭据只保存在浏览器扩展本地，不会发送给 POLYV 页面。教师端登录后可在浏览器控制台执行 <code>localStorage['questionpulse.teacher_portal_token']</code> 取到令牌。</p>
         <form class="qp-form" id="qp-form">
-          <label>后端地址<input name="apiBaseUrl" value="http://127.0.0.1:8000/api/v1" required /></label>
-          <label>课堂 ID<input name="sessionId" autocomplete="off" required /></label>
-          <label>教师访问令牌<input name="teacherToken" type="password" autocomplete="off" required /></label>
+          <label>后端地址<input name="apiBaseUrl" value="${escapeHtml(apiBaseUrl)}" required /></label>
+          <label>课堂 ID<input name="sessionId" value="${escapeHtml(sessionId)}" autocomplete="off" required /></label>
+          <label>教师访问令牌<input name="teacherToken" type="password" autocomplete="off" placeholder="qpa_..." required /></label>
           <button class="qp-button primary" type="submit">保存并连接</button>
           ${message ? `<div class="qp-error">${escapeHtml(message)}</div>` : ''}
         </form>
@@ -316,8 +468,32 @@
   function renderError(error) {
     stopPolling()
     setConnectionState(false)
+    const subtitle = root.querySelector('.qp-brand small')
+    if (subtitle) subtitle.textContent = 'Teacher Copilot'
     const rawMessage = error instanceof Error ? error.message : '连接失败'
     const contextInvalidated = /extension context invalidated/i.test(rawMessage)
+    const loginRequired = ['teacher_login_required', 'access_denied', 'access_expired'].includes(rawMessage)
+    if (loginRequired) {
+      startLoginWatch()
+      const sessionId = settingsCache?.sessionId || ''
+      body.innerHTML = `
+        <section class="qp-card">
+          <div class="qp-eyebrow">CONNECTION</div>
+          <strong>教师登录已失效</strong>
+          <p class="qp-muted">助手里存的令牌过期了，或者后端换过签名密钥。去教师端重新登录一次，助手会自动把新令牌同步过来，这个面板几秒内自己恢复，不用再点别的按钮。</p>
+          <p class="qp-error">${escapeHtml(rawMessage)}</p>
+          <div class="qp-actions">
+            <a class="qp-button primary" href="${teacherHomeUrl()}" target="_blank" rel="noopener">去重新登录</a>
+            <button class="qp-button" id="qp-retry">立即重试</button>
+            <button class="qp-button" id="qp-manual">手动填令牌</button>
+          </div>
+          <div class="qp-note">已经登录过还是这样？打开教师端任意课堂页，等 3 秒让助手同步；仍不行就点「手动填令牌」直接粘贴。</div>
+        </section>`
+      root.getElementById('qp-retry').addEventListener('click', refresh)
+      root.getElementById('qp-manual').addEventListener('click', () => renderSetup('', sessionId))
+      return
+    }
+    stopLoginWatch()
     const message = contextInvalidated
       ? '扩展已重新加载，请刷新当前 POLYV 开播页面。'
       : rawMessage
@@ -329,6 +505,7 @@
   async function refresh() {
     try {
       const settings = await config()
+      settingsCache = settings
       if (!settings.sessionId || !settings.teacherToken) {
         stopPolling()
         if (!root.getElementById('qp-form')) renderSetup()
@@ -338,9 +515,31 @@
         api(`/sessions/${settings.sessionId}/teacher-snapshot`),
         api(`/sessions/${settings.sessionId}/checks`),
       ])
+      if (snapshot?.status === 'ended' && !followAttempted) {
+        followAttempted = true
+        let target = null
+        try {
+          target = pickLiveClassroom(await api('/teacher/sessions'), snapshot.polyv_channel_id)
+        } catch {
+          // A stale token fails here. Fall through to the archived view; the
+          // switch button will surface the actual reason when pressed.
+          target = null
+        }
+        if (target && target.id !== settings.sessionId) {
+          await adoptClassroom(target)
+          return refresh()
+        }
+      }
       renderSnapshot()
-      startPolling()
+      if (snapshot?.status === 'ended') stopPolling()
+      else startPolling()
     } catch (error) {
+      if (error instanceof Error && error.message === 'session_not_found') {
+        await storageSet({ sessionId: '' })
+        stopPolling()
+        renderSetup('这堂课已被删除，请重新连接。')
+        return
+      }
       renderError(error)
     }
   }

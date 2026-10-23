@@ -8,10 +8,37 @@ class SessionCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 
 
+class TeacherLogin(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class TeacherClassroomSummary(BaseModel):
+    id: str
+    title: str
+    status: str
+    polyv_channel_id: str | None = None
+    join_code: str | None
+    question_count: int
+    cluster_count: int
+    created_at: datetime
+    ended_at: datetime | None
+
+
 class JoinRequest(BaseModel):
     viewer_key: str = Field(min_length=1, max_length=100)
     display_name: str | None = Field(default=None, max_length=100)
     join_code: str | None = Field(default=None, min_length=4, max_length=20)
+
+
+class StudentEntryRequest(BaseModel):
+    viewer_key: str = Field(min_length=1, max_length=100)
+    display_name: str = Field(min_length=1, max_length=100)
+    join_code: str = Field(min_length=4, max_length=20)
+
+
+class JoinCodeUpdate(BaseModel):
+    join_code: str = Field(min_length=4, max_length=12, pattern=r"^[A-Za-z0-9]+$")
 
 
 class QuestionCreate(BaseModel):
@@ -127,6 +154,7 @@ class ClusterView(BaseModel):
     version: int
     feedback_round: int
     feedback: FeedbackSummary
+    feedback_history: list[FeedbackSummary] = Field(default_factory=list)
     participant_count: int
     question_count: int
     confusion_score: float
@@ -141,6 +169,7 @@ class ClusterView(BaseModel):
 class Snapshot(BaseModel):
     id: str
     title: str
+    join_code: str | None
     status: str
     mode: str
     integration_status: str
@@ -188,6 +217,13 @@ class SessionReport(BaseModel):
     ended_at: datetime | None
     generated_at: datetime
     question_count: int
+    # 观看人数 = 加入并打开过学生端课堂页的人；提问人数 = 其中提过问的人。
+    viewer_count: int
+    active_viewer_count: int
+    asker_count: int
+    silent_viewer_count: int
+    ask_rate: float
+    # 兼容旧前端：等于 asker_count。
     participant_count: int
     cluster_count: int
     status_counts: dict[str, int]

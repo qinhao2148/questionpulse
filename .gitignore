@@ -29,6 +29,7 @@ Thumbs.db
 coverage/
 .coverage
 .runtime/
+.workbuddy/
 submission/*.zip
 
 # Local reference derivatives; canonical poster and documentation stay tracked

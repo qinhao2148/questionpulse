@@ -58,5 +58,5 @@ finally { Pop-Location }
 $demo = Get-Content -Raw -LiteralPath $sessionFile | ConvertFrom-Json
 Write-Host 'QuestionPulse demo is ready.' -ForegroundColor Green
 Write-Host "Student: $($demo.student_url)"
-Write-Host 'Teacher: run scripts/open-demo-teacher.ps1 to open the authorized teacher entry'
+Write-Host 'Teacher: open http://127.0.0.1:5173/ and sign in'
 Write-Host "Report:  $($demo.report_url)"

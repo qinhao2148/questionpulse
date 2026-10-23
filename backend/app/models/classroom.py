@@ -32,6 +32,31 @@ class Participant(Base):
     access_token_hash: Mapped[str | None] = mapped_column(String(64))
     access_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # student = 从学生端课堂码进入的人；polyv = 直播平台同步提问时派生的影子身份。
+    # 报告里的“观看学生”只认前者，否则平台侧 viewer id 会把分母撑大。
+    source: Mapped[str] = mapped_column(String(20), default="student")
+    # 学生端每 3 秒拉一次快照，这里记录最后一次心跳，用来区分“加入了”和“真的在看”。
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class ParticipantToken(Base):
+    """一个参与者可以同时持有多个有效令牌。
+
+    同一浏览器开两个标签页时，两个页面各自加入都会签发新令牌。如果只在
+    participants 上存一个 digest，后加入的会覆盖前一个，先打开的标签页
+    立刻掉线。把令牌拆到独立表后，旧令牌在过期前依然可用。
+    """
+
+    __tablename__ = "participant_tokens"
+    __table_args__ = (UniqueConstraint("token_hash"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    participant_id: Mapped[str] = mapped_column(
+        ForeignKey("participants.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class Cluster(Base):

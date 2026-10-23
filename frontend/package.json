@@ -6,13 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "typecheck": "vue-tsc -b"
+    "typecheck": "vue-tsc -b",
+    "test": "vitest run"
   },
   "dependencies": {
     "@polyv/interactions-receive-sdk": "0.24.0",
     "@polyv/live-watch-sdk": "^2.20.0",
-    "@vueuse/core": "^14.1.0",
-    "pinia": "^3.0.4",
     "vue": "^3.5.22",
     "vue-router": "^4.6.3"
   },
@@ -21,6 +20,7 @@
     "@vitejs/plugin-vue": "^6.0.1",
     "typescript": "^5.9.3",
     "vite": "^7.1.12",
+    "vitest": "^3.2.4",
     "vue-tsc": "^3.1.3"
   }
 }

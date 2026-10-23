@@ -68,4 +68,10 @@ if ($pairing -notmatch 'ALLOWED_ORIGINS' -or $pairing -notmatch 'ALLOWED_API_BAS
 node.exe (Join-Path $PSScriptRoot 'test-extension-pairing.mjs') (Join-Path $extensionRoot 'pairing.js')
 if ($LASTEXITCODE -ne 0) { throw 'Extension teacher-page pairing behavior failed.' }
 
+node.exe (Join-Path $PSScriptRoot 'test-pairing-autosync.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'Extension teacher-login auto-sync behavior failed.' }
+
+node.exe (Join-Path $PSScriptRoot 'test-copilot-routing.mjs') (Join-Path $extensionRoot 'content.js')
+if ($LASTEXITCODE -ne 0) { throw 'Extension classroom routing behavior failed.' }
+
 Write-Host 'Extension checks passed.' -ForegroundColor Green

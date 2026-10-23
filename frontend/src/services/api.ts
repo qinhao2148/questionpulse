@@ -6,17 +6,17 @@ export interface HealthResponse {
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
-const teacherTokenKey = (sessionId: string) => `questionpulse.teacher_token.${sessionId}`
-const joinCodeKey = (sessionId: string) => `questionpulse.join_code.${sessionId}`
 const studentTokenKey = (sessionId: string) => `questionpulse.student_token.${sessionId}`
 const studentParticipantKey = (sessionId: string) => `questionpulse.student_participant.${sessionId}`
-const teacherClassroomsKey = 'questionpulse.teacher_classrooms'
+const teacherPortalTokenKey = 'questionpulse.teacher_portal_token'
 const studentClassroomsKey = 'questionpulse.student_classrooms'
+
+/** Shown whenever the server rejects a stale teacher portal token. */
+export const TEACHER_LOGIN_REQUIRED_MESSAGE = '教师登录已过期，请重新登录教师课堂中心'
 
 export interface LocalClassroomRecord {
   id: string
   title: string
-  join_code?: string
   updated_at: string
 }
 
@@ -29,31 +29,22 @@ function saveRecord(key: string, record: LocalClassroomRecord) {
   localStorage.setItem(key, JSON.stringify([record, ...records].slice(0, 30)))
 }
 
-export const listTeacherClassrooms = () => readRecords(teacherClassroomsKey)
 export const listStudentClassrooms = () => readRecords(studentClassroomsKey)
 
-export function rememberTeacherClassroom(sessionId: string, title: string, joinCode?: string) {
-  saveRecord(teacherClassroomsKey, { id: sessionId, title, join_code: joinCode, updated_at: new Date().toISOString() })
+export function getTeacherPortalToken() {
+  return localStorage.getItem(teacherPortalTokenKey) || ''
 }
 
-export function rememberStudentClassroom(sessionId: string, title: string, joinCode?: string) {
-  saveRecord(studentClassroomsKey, { id: sessionId, title, join_code: joinCode, updated_at: new Date().toISOString() })
+export function hasTeacherAccess() { return Boolean(getTeacherPortalToken()) }
+
+export function getTeacherAccessToken() { return getTeacherPortalToken() }
+
+export function logoutTeacher() {
+  localStorage.removeItem(teacherPortalTokenKey)
 }
 
-export function saveTeacherAccess(sessionId: string, token: string, joinCode: string, title = '课堂') {
-  sessionStorage.setItem(teacherTokenKey(sessionId), token)
-  sessionStorage.setItem(joinCodeKey(sessionId), joinCode)
-  localStorage.setItem(teacherTokenKey(sessionId), token)
-  localStorage.setItem(joinCodeKey(sessionId), joinCode)
-  rememberTeacherClassroom(sessionId, title, joinCode)
-}
-
-export function getJoinCode(sessionId: string) {
-  return sessionStorage.getItem(joinCodeKey(sessionId)) || localStorage.getItem(joinCodeKey(sessionId)) || ''
-}
-
-export function getTeacherToken(sessionId: string) {
-  return sessionStorage.getItem(teacherTokenKey(sessionId)) || localStorage.getItem(teacherTokenKey(sessionId)) || ''
+export function rememberStudentClassroom(sessionId: string, title: string) {
+  saveRecord(studentClassroomsKey, { id: sessionId, title, updated_at: new Date().toISOString() })
 }
 
 export function getStudentParticipant(sessionId: string) {
@@ -65,7 +56,12 @@ function bearer(token: string | null): HeadersInit {
 }
 
 function teacherHeaders(sessionId: string): HeadersInit {
-  return bearer(getTeacherToken(sessionId))
+  void sessionId
+  return bearer(getTeacherAccessToken())
+}
+
+function teacherPortalHeaders(): HeadersInit {
+  return bearer(getTeacherPortalToken())
 }
 
 function studentHeaders(sessionId: string): HeadersInit {
@@ -124,6 +120,7 @@ export interface FeedbackSummary {
 export interface Snapshot {
   id: string
   title: string
+  join_code: string | null
   status: string
   mode: string
   integration_status: string
@@ -165,6 +162,11 @@ export interface SessionReport {
   status: string
   ended_at: string | null
   question_count: number
+  viewer_count: number
+  active_viewer_count: number
+  asker_count: number
+  silent_viewer_count: number
+  ask_rate: number
   participant_count: number
   cluster_count: number
   status_counts: Record<string, number>
@@ -196,6 +198,18 @@ export interface SessionReport {
   }>
 }
 
+export interface TeacherClassroomSummary {
+  id: string
+  title: string
+  status: string
+  polyv_channel_id: string | null
+  join_code: string | null
+  question_count: number
+  cluster_count: number
+  created_at: string
+  ended_at: string | null
+}
+
 async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
@@ -206,14 +220,38 @@ async function jsonRequest<T>(path: string, init?: RequestInit): Promise<T> {
     const labels: Record<string, string> = {
       session_ended: '课堂已结束', session_not_found: '课堂不存在',
       access_denied: '没有访问该页面或操作的权限', invalid_join_code: '课堂加入码不正确',
+      teacher_login_required: TEACHER_LOGIN_REQUIRED_MESSAGE,
+      invalid_teacher_credentials: '教师账号或密码不正确',
+      join_code_not_found: '没有找到使用该课堂码的进行中课堂',
+      join_code_in_use: '该课堂码已被其他课堂使用，请换一个',
       cannot_detach_only_question: '疑问簇只有一条问题，无法继续拆分',
-      question_not_pending: '该问题当前无需重试', version_conflict: '数据已更新，请刷新后重试',
+      question_not_pending: '该问题当前无需重试',
       check_already_answered: '本题已经提交，答案不能再次修改',
+      cluster_version_conflict: '这条疑问刚被别的操作更新过，请刷新后重试',
+      cluster_not_found: '这条疑问不存在或已被删除',
+      question_not_found: '这条问题不存在或已被删除',
+      check_question_not_found: '这道检测题不存在或已被删除',
+      check_question_not_active: '这道检测已经结束，不能再作答',
+      invalid_status_transition: '当前状态不支持这一步操作，请刷新后再试',
+      invalid_check_option: '选择的选项无效，请刷新后重新作答',
+      feedback_round_not_open: '本轮反馈已经结束，无法再提交',
+      feedback_round_not_started: '教师还没有结束讲解，暂时不能提交理解反馈',
+      participant_not_feedback_target: '本轮反馈没有发给你，无法提交',
+      participant_not_check_target: '这道检测没有发给你，无法作答',
+      participant_not_in_session: '你已不在本课堂中，请重新加入',
+      question_has_no_cluster: '这条问题还没有归入任何疑问主题',
+      question_has_no_embedding: '这条问题缺少语义向量，暂时无法拆分',
       polyv_credentials_not_configured: '直播平台授权信息尚未配置',
       polyv_channel_not_configured: '尚未配置直播频道',
       polyv_api_unavailable: '直播互动暂时无法同步，请稍后重试',
     }
     const knownMessage = labels[body?.detail || '']
+    if (body?.detail === 'teacher_login_required') {
+      // The stored token is no longer usable, so drop it. Keeping it only makes
+      // every later request fail the same way with no way back to the login form.
+      logoutTeacher()
+      window.dispatchEvent(new CustomEvent('questionpulse:teacher-login-required'))
+    }
     if (knownMessage) throw new Error(knownMessage)
     if (response.status >= 500) throw new Error('课堂服务暂时不可用，请稍后重试')
     throw new Error(body?.detail || '请求未完成，请检查入口后重试')
@@ -230,22 +268,43 @@ export async function fetchHealth(): Promise<HealthResponse> {
 }
 
 export async function createClassroom(title: string): Promise<{ id: string; join_code: string }> {
-  const result = await jsonRequest<{ data: { id: string; teacher_token: string; join_code: string } }>('/sessions', {
-    method: 'POST', body: JSON.stringify({ title }),
+  const result = await jsonRequest<{ data: { id: string; join_code: string } }>('/sessions', {
+    method: 'POST', headers: teacherPortalHeaders(), body: JSON.stringify({ title }),
   })
-  saveTeacherAccess(result.data.id, result.data.teacher_token, result.data.join_code, title)
   return { id: result.data.id, join_code: result.data.join_code }
 }
 
-export async function joinClassroom(sessionId: string, viewerKey: string, joinCode?: string) {
-  const result = await jsonRequest<{ data: { participant_id: string; access_token: string } }>(
-    `/sessions/${sessionId}/join`,
-    { method: 'POST', body: JSON.stringify({ viewer_key: viewerKey, join_code: joinCode || null }) },
+export async function loginTeacher(username: string, password: string) {
+  const result = await jsonRequest<{ data: { access_token: string } }>('/teacher/login', {
+    method: 'POST', body: JSON.stringify({ username, password }),
+  })
+  localStorage.setItem(teacherPortalTokenKey, result.data.access_token)
+}
+
+export function fetchTeacherClassrooms(): Promise<TeacherClassroomSummary[]> {
+  return jsonRequest<TeacherClassroomSummary[]>('/teacher/sessions', {
+    headers: teacherPortalHeaders(),
+  })
+}
+
+export async function joinClassroomByCode(joinCode: string, displayName: string, viewerKey: string) {
+  const result = await jsonRequest<{ data: { session_id: string; session_title: string; participant_id: string; access_token: string; join_code: string } }>(
+    '/student/join',
+    { method: 'POST', body: JSON.stringify({ join_code: joinCode, display_name: displayName, viewer_key: viewerKey }) },
   )
+  const sessionId = result.data.session_id
   sessionStorage.setItem(studentTokenKey(sessionId), result.data.access_token)
   localStorage.setItem(studentTokenKey(sessionId), result.data.access_token)
   localStorage.setItem(studentParticipantKey(sessionId), result.data.participant_id)
-  return { participant_id: result.data.participant_id }
+  rememberStudentClassroom(sessionId, result.data.session_title)
+  return result.data
+}
+
+export async function updateJoinCode(sessionId: string, joinCode: string) {
+  const result = await jsonRequest<{ data: { join_code: string } }>(`/sessions/${sessionId}/join-code`, {
+    method: 'PATCH', headers: teacherHeaders(sessionId), body: JSON.stringify({ join_code: joinCode }),
+  })
+  return result.data.join_code
 }
 
 export async function submitQuestion(

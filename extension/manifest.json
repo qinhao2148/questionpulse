@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "QuestionPulse Teacher Copilot",
-  "version": "0.2.3",
+  "version": "0.3.2",
   "description": "在 POLYV 网页开播台内查看并处理实时群体疑问。",
   "permissions": ["storage"],
   "host_permissions": [
@@ -16,8 +16,8 @@
     },
     {
       "matches": [
-        "http://127.0.0.1:5173/teacher/*",
-        "http://localhost:5173/teacher/*"
+        "http://127.0.0.1:5173/*",
+        "http://localhost:5173/*"
       ],
       "js": ["pairing.js"],
       "run_at": "document_idle"
