@@ -6,12 +6,14 @@
   >
     <header
       class="questionpulse-panel__header"
-      @click="collapsed = !collapsed"
+      @click="toggleCollapsed"
     >
       <div>
         <strong>QuestionPulse</strong><span>{{ connectionLabel }}</span>
       </div>
-      <button type="button">{{ collapsed ? '展开' : '收起' }}</button>
+      <button type="button">
+        {{ collapsed ? '展开' : '收起' }}
+      </button>
     </header>
     <div
       v-if="!collapsed"
@@ -24,6 +26,12 @@
       >
         <h3>加入直播课堂</h3>
         <p>输入教师提供的课堂码，进入保利威直播和课堂互动。</p>
+        <p
+          v-if="duplicateTabHint"
+          class="questionpulse-panel__error"
+        >
+          这个标签页复制了自己已经进入的课堂，保利威同一观众只能开一个播放器。请换一个名字重新进入，或关掉另一个标签页。
+        </p>
         <input
           v-model="displayName"
           maxlength="100"
@@ -49,36 +57,41 @@
       </p>
       <template v-if="snapshot">
         <section
-          v-if="activeCluster"
+          v-for="cluster in activeClusters"
+          :key="cluster.id"
           class="questionpulse-card"
         >
-          <small>{{ activeCluster.status === 'addressing' ? '教师正在讲解' : '讲解已结束' }}</small>
-          <h3>{{ activeCluster.title }}</h3>
+          <small>{{ cluster.status === 'addressing' ? '教师正在讲解' : '讲解已结束' }}</small>
+          <h3>{{ cluster.title }}</h3>
           <div
-            v-if="activeCluster.status === 'awaiting_feedback' && !activeCluster.feedback.my_result"
+            v-if="cluster.status === 'awaiting_feedback' && !cluster.feedback.my_result"
             class="questionpulse-actions"
           >
             <button
               type="button"
-              @click="submitFeedback('understood')"
+              @click="submitFeedback(cluster, 'understood')"
             >
               已经理解
             </button>
             <button
               type="button"
               class="secondary"
-              @click="submitFeedback('still_confused')"
+              @click="submitFeedback(cluster, 'still_confused')"
             >
               仍然困惑
             </button>
           </div>
           <p
-            v-else-if="activeCluster.feedback.my_result"
+            v-else-if="cluster.feedback.my_result"
             class="questionpulse-success"
           >
-            已反馈：{{
-              activeCluster.feedback.my_result === 'understood' ? '已经理解' : '仍然困惑'
-            }}
+            已反馈：{{ cluster.feedback.my_result === 'understood' ? '已经理解' : '仍然困惑' }}
+          </p>
+          <p
+            v-else
+            class="questionpulse-note"
+          >
+            听老师讲完后，这里会出现「已经理解 / 仍然困惑」两个按钮。
           </p>
         </section>
 
@@ -94,6 +107,7 @@
             :key="option.key"
             type="button"
             class="questionpulse-option"
+            :class="{ selected: check.my_option_key === option.key }"
             :disabled="Boolean(check.my_option_key)"
             @click="submitAnswer(check.id, option.key)"
           >
@@ -102,17 +116,37 @@
           <p
             v-if="check.my_option_key"
             class="questionpulse-success"
+            :class="{ 'is-wrong': check.my_is_correct === false }"
           >
-            已提交答案 {{ check.my_option_key }}
+            已提交 {{ check.my_option_key }} ·
+            {{ check.my_is_correct ? '回答正确' : '回答错误' }}
+            <template v-if="check.correct_option_key">
+              ，正确答案 {{ check.correct_option_key }}
+            </template>
+          </p>
+          <p
+            v-if="check.my_option_key && check.explanation"
+            class="questionpulse-note"
+          >
+            {{ check.explanation }}
           </p>
         </section>
 
         <p
-          v-if="!activeCluster && !checks.length"
+          v-if="!activeClusters.length && !checks.length"
           class="questionpulse-empty"
         >
           聊天中的课程疑问会自动识别并汇总给教师。
         </p>
+
+        <button
+          v-if="!joinMode"
+          type="button"
+          class="questionpulse-switch"
+          @click="switchClassroom"
+        >
+          退出课堂 / 换一个课堂码
+        </button>
       </template>
     </div>
   </aside>
@@ -124,20 +158,32 @@ import { ChatEvents, ChatMsgSource, ChatMsgType } from '@polyv/live-watch-sdk';
 import { useGlobalInject } from '@/app/use-global-inject';
 import {
   answerQuestionPulseCheck,
+  clearQuestionPulseCredentials,
   fetchQuestionPulseChecks,
   fetchQuestionPulseSnapshot,
   joinQuestionPulseClassroom,
+  QuestionPulseApiError,
   questionPulseCredentials,
+  questionPulseJoinUrl,
   sendQuestionPulseFeedback,
   uploadQuestionPulseChat,
   type QuestionPulseCheck,
+  type QuestionPulseCluster,
   type QuestionPulseSnapshot,
 } from './api';
 
-const joinMode = !questionPulseCredentials;
+// ?qpJoin=1 forces the join screen. The launcher and the docs hand out that link,
+// and it used to be decorative: the only real trigger was "no cached identity".
+const forcedJoin = new URLSearchParams(window.location.search).get('qpJoin') === '1';
+// tab-guard 发现同一个学生已经在别的标签页里播放，会把本页踢回加入表单。
+const duplicateTabHint = new URLSearchParams(window.location.search).get('qpDup') === '1';
+const joinMode = forcedJoin || !questionPulseCredentials;
 const enabled = true;
 const collapsed = ref(false);
-const displayName = ref(localStorage.getItem('questionpulse.display_name') || '');
+// Never pre-fill this field. It used to read the last name saved on this
+// machine, so a student who typed nothing entered the lesson under whoever had
+// used the browser before them.
+const displayName = ref('');
 const joinCode = ref('');
 const joining = ref(false);
 const snapshot = ref<QuestionPulseSnapshot | null>(null);
@@ -147,8 +193,10 @@ const uploaded = new Set<string>();
 let refreshTimer: number | undefined;
 const { getWatchCore } = useGlobalInject();
 
-const activeCluster = computed(() =>
-  snapshot.value?.clusters.find(cluster =>
+// A teacher can run several clusters at once (start explaining A, then B), so
+// every active cluster is shown instead of only the first one found.
+const activeClusters = computed<QuestionPulseCluster[]>(() =>
+  (snapshot.value?.clusters || []).filter(cluster =>
     ['addressing', 'awaiting_feedback'].includes(cluster.status),
   ),
 );
@@ -156,19 +204,51 @@ const connectionLabel = computed(() => {
   if (joinMode) return '学生入口';
   if (snapshot.value?.status === 'ended') return '课堂已结束';
   if (error.value) return '连接异常';
-  return '疑问识别已连接';
+  return snapshot.value?.title ? `当前课堂：${snapshot.value.title}` : '疑问识别已连接';
 });
+
+function toggleCollapsed() {
+  // In join mode the header is the top bar of a full-screen form. Collapsing it
+  // used to hide the only way into the classroom with no visible way back.
+  if (joinMode) return;
+  collapsed.value = !collapsed.value;
+}
 
 async function joinClassroom() {
   joining.value = true;
   error.value = '';
   try {
-    localStorage.setItem('questionpulse.display_name', displayName.value.trim());
     await joinQuestionPulseClassroom(joinCode.value, displayName.value);
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '加入课堂失败';
     joining.value = false;
   }
+}
+
+/** A stale or missing identity must lead somewhere, not into a dead end. */
+let leaving = false;
+
+function leaveClassroom(message: string) {
+  // The 3s poll can fire again before the navigation lands; without this guard
+  // the student would get the same alert twice.
+  if (leaving) return;
+  leaving = true;
+  clearQuestionPulseCredentials();
+  window.alert(message);
+  window.location.assign(questionPulseJoinUrl());
+}
+
+function handleError(reason: unknown) {
+  if (
+    reason instanceof QuestionPulseApiError &&
+    ['access_denied', 'access_expired', 'participant_not_in_session', 'no_credentials'].includes(
+      reason.code,
+    )
+  ) {
+    leaveClassroom('课堂身份已失效，请重新输入课堂码。');
+    return;
+  }
+  error.value = reason instanceof Error ? reason.message : '操作失败，请稍后重试';
 }
 
 async function refresh() {
@@ -178,23 +258,52 @@ async function refresh() {
     checks.value = snapshot.value.status === 'ended' ? [] : await fetchQuestionPulseChecks();
     error.value = '';
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '暂时无法同步课堂状态';
+    handleError(reason);
   }
 }
 
-async function submitFeedback(result: string) {
-  if (!activeCluster.value) return;
-  await sendQuestionPulseFeedback(
-    activeCluster.value.id,
-    activeCluster.value.feedback_round,
-    result,
-  );
-  await refresh();
+async function submitFeedback(cluster: QuestionPulseCluster, result: string) {
+  error.value = '';
+  try {
+    await sendQuestionPulseFeedback(cluster.id, cluster.feedback_round, result);
+    await refresh();
+  } catch (reason) {
+    handleError(reason);
+  }
 }
 
 async function submitAnswer(checkId: string, optionKey: string) {
-  await answerQuestionPulseCheck(checkId, optionKey);
-  await refresh();
+  error.value = '';
+  try {
+    await answerQuestionPulseCheck(checkId, optionKey);
+    await refresh();
+  } catch (reason) {
+    handleError(reason);
+  }
+}
+
+function switchClassroom() {
+  if (!window.confirm('退出当前课堂并重新输入课堂码？')) return;
+  clearQuestionPulseCredentials();
+  window.location.assign(questionPulseJoinUrl());
+}
+
+function isOwnMessage(chatMsg: ChatMsgType) {
+  const msg = chatMsg as ChatMsgType & {
+    isSelf?: boolean;
+    isLocal?: boolean;
+    user?: { userId?: string };
+  };
+  // 公聊文本（ChatMsgSource.Speak）的类型定义里没有 isSelf，SDK 只对打赏/图片标记 isSelf。
+  // 因此先看 isSelf/isLocal，再回退到「消息 userId 是否等于当前观众」。
+  if (msg.isSelf === true || msg.isLocal === true) return true;
+  const userId = msg.user?.userId;
+  if (!userId) return false;
+  try {
+    return getWatchCore().user.isCurrentUser(userId);
+  } catch {
+    return false;
+  }
 }
 
 function uploadIfConfirmed(chatMsg: ChatMsgType) {
@@ -202,13 +311,13 @@ function uploadIfConfirmed(chatMsg: ChatMsgType) {
   const speak = chatMsg as ChatMsgType & {
     content?: string;
     time?: number;
-    isSelf?: boolean;
     isLocal?: boolean;
     isSended?: boolean;
     isSendFailed?: boolean;
   };
-  if (!speak.isSelf || speak.isSendFailed || !speak.content || uploaded.has(speak.id)) return;
-  if (speak.isLocal && !speak.isSended) return;
+  if (!isOwnMessage(chatMsg) || speak.isSendFailed || !speak.content || uploaded.has(speak.id))
+    return;
+  if (speak.isLocal === true && speak.isSended !== true) return;
   uploaded.add(speak.id);
   uploadQuestionPulseChat({ id: speak.id, content: speak.content, time: speak.time }).catch(() => {
     uploaded.delete(speak.id);
@@ -294,7 +403,11 @@ onBeforeUnmount(() => {
     gap: 2px;
   }
   span {
+    max-width: 240px;
+    overflow: hidden;
     font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     opacity: 0.82;
   }
   button {
@@ -391,6 +504,29 @@ onBeforeUnmount(() => {
   margin: 4px;
   line-height: 1.55;
   color: #687189;
+}
+.questionpulse-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #687189;
+}
+.questionpulse-success.is-wrong {
+  color: #b43b45;
+}
+.questionpulse-option.selected {
+  background: #f0f2ff;
+  border-color: #5667ed;
+}
+.questionpulse-switch {
+  width: 100%;
+  padding: 8px;
+  margin-top: 6px;
+  color: #687189;
+  cursor: pointer;
+  background: transparent;
+  border: 1px dashed #d6daea;
+  border-radius: 9px;
 }
 @media (max-width: 640px) {
   .questionpulse-panel {

@@ -190,6 +190,7 @@ async def test_fetch_chat_messages_keeps_only_public_text_messages() -> None:
                             "time": 1722912874624,
                             "sourceType": "public",
                             "msgType": None,
+                            "sessionId": "hngwyzi7c8",
                             "user": {"userId": "viewer-question"},
                         },
                         {
@@ -224,3 +225,6 @@ async def test_fetch_chat_messages_keeps_only_public_text_messages() -> None:
     assert [item.external_id for item in messages] == ["chat-1"]
     assert messages[0].viewer_key == "viewer-question"
     assert messages[0].source == "polyv_chat"
+    # One channel hosts many live sessions, so the session id has to survive
+    # normalization or two classrooms on the same channel cannot be separated.
+    assert messages[0].polyv_session_id == "hngwyzi7c8"

@@ -97,7 +97,7 @@ export const useChatStore = defineStore<'chat', ChatStore>('chat', () => {
   const playbackStore = usePlaybackStore();
   const layoutStore = useLayoutStore();
   const themeStore = useThemeStore();
-  const { paramGetter } = useQueryParams();
+  const { getQueryParams, paramGetter } = useQueryParams();
 
   const { redirectToErrorVerify } = useErrorVerify();
 
@@ -189,11 +189,16 @@ export const useChatStore = defineStore<'chat', ChatStore>('chat', () => {
   /** 实时的点赞数 */
   const realtimeLikes = ref(0);
 
+  /** QuestionPulse 课堂需要让学生看到同一公开聊天室里的其他学生消息。 */
+  const questionPulsePublicChatEnabled = computed(() => Boolean(getQueryParams().qpSessionId));
+
   /**
    * "只看特殊角色的消息"的控件是否展示
    * */
   const onlySpecialMsgWidgetVisible = computed(() => {
     if (playbackStore.chatMsgReplayEnabled) return false;
+
+    if (questionPulsePublicChatEnabled.value) return true;
 
     return !chatSetting.value.filterManagerMsgEnabled;
   });
@@ -300,7 +305,11 @@ export const useChatStore = defineStore<'chat', ChatStore>('chat', () => {
     const setting = watchCore.chat.getChatSetting();
     chatSetting.value = setting;
 
-    if (!onlySpecialMsg.value && setting.filterManagerMsgEnabled) {
+    if (questionPulsePublicChatEnabled.value) {
+      // 保利威频道可能配置了“只看管理员消息”。QuestionPulse 是课堂公开讨论场景，
+      // 这里必须覆盖该观看端展示偏好，否则每名学生只能看到自己本地插入的消息。
+      onlySpecialMsg.value = false;
+    } else if (!onlySpecialMsg.value && setting.filterManagerMsgEnabled) {
       onlySpecialMsg.value = true;
     }
 

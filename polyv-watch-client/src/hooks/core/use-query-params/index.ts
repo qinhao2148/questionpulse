@@ -203,6 +203,8 @@ export const useQueryParams = (opts?: {
     name: buildGetters('name'),
     /** 观众昵称 */
     nickname: buildGetters('nickname'),
+    /** QuestionPulse 用户体系独立授权昵称（URL-safe Base64） */
+    qpIdentityNickname: buildGetters('qpIdentityNickname'),
     /** 观众头像 */
     avatar: buildGetters('avatar'),
     /** 网络类型 */

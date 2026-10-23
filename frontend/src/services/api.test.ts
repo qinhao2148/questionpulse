@@ -4,12 +4,9 @@ import {
   createClassroom,
   fetchHealth,
   fetchTeacherClassrooms,
-  getStudentParticipant,
   hasTeacherAccess,
-  listStudentClassrooms,
   loginTeacher,
   logoutTeacher,
-  rememberStudentClassroom,
 } from './api'
 
 function createStorage(): Storage {
@@ -77,37 +74,6 @@ describe('teacher portal session', () => {
     const headers = headersOf(fetchMock.mock.calls[0])
     expect(headers.Authorization).toBe('Bearer qpa_1700000000_abc')
     expect(headers['Content-Type']).toBe('application/json')
-  })
-})
-
-describe('local classroom history', () => {
-  it('keeps one record per classroom with the newest first', () => {
-    rememberStudentClassroom('session-a', '第一节')
-    rememberStudentClassroom('session-b', '第二节')
-    rememberStudentClassroom('session-a', '第一节改名')
-
-    const records = listStudentClassrooms()
-    expect(records.map((record) => record.id)).toEqual(['session-a', 'session-b'])
-    expect(records[0].title).toBe('第一节改名')
-  })
-
-  it('caps stored history at thirty entries', () => {
-    for (let index = 0; index < 35; index += 1) {
-      rememberStudentClassroom(`session-${index}`, `课堂 ${index}`)
-    }
-
-    const records = listStudentClassrooms()
-    expect(records).toHaveLength(30)
-    expect(records[0].id).toBe('session-34')
-  })
-
-  it('returns an empty list when storage holds invalid json', () => {
-    localStorage.setItem('questionpulse.student_classrooms', '{not json')
-    expect(listStudentClassrooms()).toEqual([])
-  })
-
-  it('returns an empty participant string for an unknown classroom', () => {
-    expect(getStudentParticipant('missing')).toBe('')
   })
 })
 

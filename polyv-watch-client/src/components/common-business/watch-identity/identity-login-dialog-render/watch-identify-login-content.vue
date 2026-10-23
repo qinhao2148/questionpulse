@@ -20,7 +20,7 @@ import { ErrorVerifyType, useErrorVerify } from '@/hooks/core/use-error-verify';
 import { PropUtils, emitFunc } from '@polyv/vue-components';
 import { useQueryParams } from '@/hooks/core/use-query-params';
 
-const { removeQueryParam } = useQueryParams();
+const { paramGetter, removeQueryParam } = useQueryParams();
 
 const { getMobilePolyvWatchIdentifySDKSceneComponent, getPcPolyvWatchIdentifySDKSceneComponent } =
   useWatchIdentifySDKSceneLoader();
@@ -54,7 +54,13 @@ const { redirectToErrorVerify } = useErrorVerify();
 const identityStore = useIdentityStore();
 
 function onLoginSuccess() {
-  removeQueryParam(['forceUserAuth']);
+  // Direct-auth signatures are short-lived. Remove the consumed credentials
+  // before reloading so refresh/copy-link never retries or shares them.
+  const consumedParams: Parameters<typeof removeQueryParam>[0] = ['forceUserAuth'];
+  if (paramGetter().externalViewerId() && paramGetter().qpIdentityNickname()) {
+    consumedParams.push('externalViewerId', 'qpIdentityNickname', 'ts', 'sign');
+  }
+  removeQueryParam(consumedParams);
   // 成功提交后刷新当前页面即可
   window.location.reload();
 }

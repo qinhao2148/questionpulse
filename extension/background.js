@@ -26,6 +26,7 @@ function isAllowedRequest(path, method, sessionId) {
     ['GET', new RegExp(`^/sessions/${escapedSessionId}/teacher-snapshot$`)],
     ['POST', new RegExp(`^/sessions/${escapedSessionId}/end$`)],
     ['GET', new RegExp(`^/sessions/${escapedSessionId}/checks$`)],
+    ['POST', new RegExp(`^/sessions/${escapedSessionId}/integrations/polyv/chat/sync$`)],
     ['PATCH', new RegExp(`^/sessions/${escapedSessionId}/clusters/[0-9a-f-]+/status$`, 'i')],
     ['POST', new RegExp(`^/sessions/${escapedSessionId}/clusters/[0-9a-f-]+/checks/generate$`, 'i')],
     ['POST', new RegExp(`^/sessions/${escapedSessionId}/checks/[0-9a-f-]+/approve$`, 'i')],

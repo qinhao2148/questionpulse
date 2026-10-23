@@ -134,8 +134,8 @@ export const useIdentityStore = defineStore<'identity', IdentityStore>('identity
   function getDirectAuthParams(): IdentityDirectAuthParams {
     return {
       externalViewerId: paramGetter().externalViewerId() || '',
-      nickname: paramGetter().nickname() || '',
-      ts: paramGetter().ts() as unknown as number,
+      nickname: paramGetter().qpIdentityNickname() || paramGetter().nickname() || '',
+      ts: Number(paramGetter().ts() || 0),
       param4: paramGetter().param4(),
       param5: paramGetter().param5(),
       sign: paramGetter().sign() || '',

@@ -43,6 +43,7 @@ const integrationMessage = ref('')
 const ending = ref(false)
 const creatingNext = ref(false)
 const joinCodeDraft = ref('')
+const joinCodeDirty = ref(false)
 const savingJoinCode = ref(false)
 const showingReport = ref(false)
 const loading = ref(true)
@@ -50,6 +51,13 @@ const missingTeacherAccess = ref(false)
 const copilotState = ref<'idle' | 'waiting' | 'connected' | 'unavailable'>('idle')
 let copilotRequestId = ''
 let copilotTimer: number | undefined
+let pollTimer: number | undefined
+// Students ask questions continuously while the lesson runs, so the workbench
+// has to follow along. It used to require a manual refresh even though the
+// header promised new questions would show up on their own.
+// A snapshot costs ~12ms server-side, so 3s keeps the panel feeling live without
+// measurable load; the POLYV pull is throttled separately by AUTO_SYNC_INTERVAL_MS.
+const POLL_INTERVAL_MS = 3000
 const clusters = computed(() => snapshot.value?.clusters ?? [])
 const selected = computed(() => clusters.value.find((item) => item.id === selectedId.value))
 // A check belongs to one feedback round. Matching only on the cluster id made
@@ -67,6 +75,17 @@ const participantTotal = computed(() => new Set(
   clusters.value.flatMap((cluster) => cluster.questions.map((question) => question.participant_id)),
 ).size)
 const activeClusterTotal = computed(() => clusters.value.filter((item) => item.status !== 'closed').length)
+// "课堂数据已连接" used to show even for a classroom that never talked to POLYV,
+// which made the teacher believe live sync was on when only local questions worked.
+const connectionTitle = computed(() => {
+  if (snapshot.value?.status === 'ended') return '课堂已结束'
+  if (error.value) return '部分功能需要处理'
+  const status = snapshot.value?.integration_status
+  if (status === 'degraded') return '互动同步暂时中断'
+  if (status === 'connected') return '直播互动已连接'
+  if (status === 'contract_verified') return '接入验证已完成'
+  return '课堂提问已就绪'
+})
 const joinCode = computed(() => snapshot.value?.join_code || '')
 const studentJoinUrl = computed(() => {
   const base = import.meta.env.VITE_POLYV_WATCH_BASE_URL || 'http://127.0.0.1:15021/index.html'
@@ -124,7 +143,9 @@ async function refresh() {
     ;[snapshot.value, checks.value, chatReviewQueue.value] = await Promise.all([
       fetchTeacherSnapshot(sessionId), fetchTeacherChecks(sessionId), fetchChatReviewQueue(sessionId),
     ])
-    joinCodeDraft.value = snapshot.value.join_code || ''
+    // Polling must not overwrite the classroom code while the teacher is typing
+    // a replacement into the input.
+    if (!joinCodeDirty.value) joinCodeDraft.value = snapshot.value.join_code || ''
     if (!selectedId.value && clusters.value.length) selectedId.value = clusters.value[0].id
   } catch (reason) {
     const message = reason instanceof Error ? reason.message : '无法读取课堂'
@@ -141,12 +162,75 @@ async function refresh() {
   }
 }
 
+function stopPolling() {
+  if (pollTimer) window.clearInterval(pollTimer)
+  pollTimer = undefined
+  if (settleTimer) window.clearTimeout(settleTimer)
+  settleTimer = undefined
+}
+
+function startPolling() {
+  stopPolling()
+  // A finished classroom is read-only, and a hidden tab should not keep hitting
+  // the API. Both resume the moment the teacher is back on a live classroom.
+  pollTimer = window.setInterval(() => {
+    if (document.hidden || showingReport.value) return
+    if (snapshot.value?.status === 'ended') return
+    // One tick at a time: a POLYV pull can outlast the interval, and overlapping
+    // ticks would queue duplicate requests behind the same endpoint.
+    if (pollBusy) return
+    pollBusy = true
+    void (async () => {
+      try {
+        const pulled = await autoPullChat()
+        await refresh()
+        if (!pulled) return
+        // Classification starts only after the sync response is sent, so the
+        // snapshot we just fetched still carries the message as pending. Look
+        // again once the model has had time to finish, instead of making the
+        // teacher wait for the next full tick.
+        settleTimer = window.setTimeout(() => {
+          if (!document.hidden && !showingReport.value) void refresh()
+        }, SETTLE_REFRESH_MS)
+      } finally {
+        pollBusy = false
+      }
+    })()
+  }, POLL_INTERVAL_MS)
+}
+
+// POLYV 只提供聊天历史的拉取接口，学生的消息不会主动推到我们这边。
+// 不自动拉一次，界面就会一直空空如也，看起来像「没有记录」。
+// 6 秒是折中：一次同步约 300ms，DeepSeek 分类约 1.8 秒，再密就开始压官方限流。
+const AUTO_SYNC_INTERVAL_MS = 6_000
+const SETTLE_REFRESH_MS = 2_500
+let lastAutoSyncAt = 0
+let pollBusy = false
+let settleTimer: number | undefined
+
+async function autoPullChat(): Promise<boolean> {
+  if (Date.now() - lastAutoSyncAt < AUTO_SYNC_INTERVAL_MS) return false
+  // 先打时间戳：接口失败时不要每个 tick 都重试一次。
+  lastAutoSyncAt = Date.now()
+  try {
+    await syncPolyvChatMessages(props.sessionId)
+    return true
+  } catch {
+    // 手动「同步聊天与提问」会把原因显示出来，后台轮询保持安静。
+    return false
+  }
+}
+
 async function saveJoinCode() {
   const code = joinCodeDraft.value.trim().toUpperCase()
   if (code.length < 4) return
   savingJoinCode.value = true
   error.value = ''
-  try { await updateJoinCode(props.sessionId, code); await refresh() }
+  try {
+    await updateJoinCode(props.sessionId, code)
+    joinCodeDirty.value = false
+    await refresh()
+  }
   catch (reason) { error.value = reason instanceof Error ? reason.message : '课堂码保存失败' }
   finally { savingJoinCode.value = false }
 }
@@ -160,6 +244,7 @@ async function bootstrapTeacherAccess() {
   }
   missingTeacherAccess.value = false
   await refresh()
+  if (snapshot.value && snapshot.value.status !== 'ended') startPolling()
 }
 
 async function detach(questionId: string) {
@@ -184,13 +269,15 @@ async function retry(questionId: string) {
 }
 
 async function finishClassroom() {
-  if (!window.confirm('结束课堂后，学生将无法继续观看和提问，课堂数据会转为只读。确定结束吗？')) return
+  // 结束课堂只关闭提问、反馈和检测，不会停止 POLYV 里的推流/观看。
+  if (!window.confirm('结束课堂后，学生将无法继续提问、提交反馈或作答，课堂数据会转为只读。确定结束吗？')) return
   error.value = ''
   ending.value = true
   try {
     await endClassroom(props.sessionId)
-    integrationMessage.value = '课堂已结束，学生端已停止播放和提问。请同时在开播页面结束直播。'
+    integrationMessage.value = '课堂已结束，学生端已停止接收提问与反馈。请同时在开播页面结束直播。'
     await refresh()
+    stopPolling()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '结束课堂失败'
   } finally {
@@ -231,16 +318,34 @@ async function verifyContract() {
 async function syncPolyv() {
   error.value = ''
   integrationMessage.value = ''
-  try {
-    const sessionId = props.sessionId
-    const chat = await syncPolyvChatMessages(sessionId)
-    const questions = await syncPolyvQuestions(sessionId)
-    integrationMessage.value = `真实同步完成：聊天新增 ${chat.data.accepted} 条、去重 ${chat.data.duplicates} 条；提问新增 ${questions.data.accepted} 条、去重 ${questions.data.duplicates} 条`
-    await refresh()
-  } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : '真实同步失败'
-    await refresh()
+  const sessionId = props.sessionId
+  // Chat history and the Q&A list are independent POLYV endpoints. Running them
+  // one after another meant a chat-sync failure also skipped the questions.
+  const [chatResult, questionResult] = await Promise.allSettled([
+    syncPolyvChatMessages(sessionId), syncPolyvQuestions(sessionId),
+  ])
+  const parts: string[] = []
+  if (chatResult.status === 'fulfilled') {
+    parts.push(`聊天新增 ${chatResult.value.data.accepted} 条、去重 ${chatResult.value.data.duplicates} 条`)
+  } else {
+    parts.push(`聊天同步失败（${chatResult.reason instanceof Error ? chatResult.reason.message : '未知错误'}）`)
   }
+  if (questionResult.status === 'fulfilled') {
+    parts.push(`提问新增 ${questionResult.value.data.accepted} 条、去重 ${questionResult.value.data.duplicates} 条`)
+  } else {
+    parts.push(`提问同步失败（${questionResult.reason instanceof Error ? questionResult.reason.message : '未知错误'}）`)
+  }
+  const failed = chatResult.status === 'rejected' || questionResult.status === 'rejected'
+  if (failed) error.value = parts.join('；')
+  else integrationMessage.value = `真实同步完成：${parts.join('；')}`
+  // A manual pull has the same lag as the background one: the model only starts
+  // after the response, so the first refresh still lists nothing new.
+  lastAutoSyncAt = Date.now()
+  await refresh()
+  if (settleTimer) window.clearTimeout(settleTimer)
+  settleTimer = window.setTimeout(() => {
+    if (!document.hidden) void refresh()
+  }, SETTLE_REFRESH_MS)
 }
 
 async function drill(action: 'degrade' | 'recover') {
@@ -359,11 +464,12 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('message', handleCopilotPairing)
   if (copilotTimer) window.clearTimeout(copilotTimer)
+  stopPolling()
 })
 </script>
 
 <template>
-  <main class="workspace teacher-page">
+  <main class="workspace teacher-page" :class="{ 'showing-report': showingReport }">
     <section v-if="!snapshot" class="surface page-state">
       <p class="eyebrow">教师工作台</p>
       <h1>{{ loading ? '正在加载课堂…' : '无法打开教师工作台' }}</h1>
@@ -375,19 +481,19 @@ onBeforeUnmount(() => {
     <template v-else>
     <header class="page-heading">
       <div><p class="eyebrow">教师工作台</p><h1>{{ snapshot.title }}</h1><p>{{ snapshot.status === 'ended' ? '课堂已结束 · 数据只读' : '实时汇总学生疑问与理解反馈' }}</p></div>
-      <div class="connection"><span class="live-dot"></span><div><strong>{{ snapshot.status === 'ended' ? '课堂已结束' : error ? '部分功能需要处理' : snapshot.integration_status === 'degraded' ? '互动同步暂时中断' : '课堂数据已连接' }}</strong><small>{{ error || integrationMessage || (snapshot.status === 'ended' ? '可查看报告或创建下一堂课' : '新问题会自动出现在下方') }}</small></div><button @click="emit('close')">课堂列表</button><button @click="refresh">刷新</button><button class="button-link" @click="showingReport = !showingReport">{{ showingReport ? '收起报告' : '课堂报告' }}</button><button v-if="snapshot.status !== 'ended'" @click="syncPolyv">同步聊天与提问</button><button v-if="snapshot.status !== 'ended'" class="danger-action" :disabled="ending" @click="finishClassroom">{{ ending ? '正在结束…' : '结束课堂' }}</button><button v-else class="primary-action" :disabled="creatingNext" @click="createNextClassroom">{{ creatingNext ? '正在创建…' : '创建下一堂课' }}</button></div>
+      <div class="connection"><span class="live-dot"></span><div><strong>{{ connectionTitle }}</strong><small>{{ error || integrationMessage || (snapshot.status === 'ended' ? '可查看报告或创建下一堂课' : '新问题会自动出现在下方') }}</small></div><button @click="emit('close')">课堂列表</button><button @click="refresh">刷新</button><button class="button-link" @click="showingReport = !showingReport">{{ showingReport ? '收起报告' : '课堂报告' }}</button><button v-if="snapshot.status !== 'ended'" @click="syncPolyv">同步聊天与提问</button><button v-if="snapshot.status !== 'ended'" class="danger-action" :disabled="ending" @click="finishClassroom">{{ ending ? '正在结束…' : '结束课堂' }}</button><button v-else class="primary-action" :disabled="creatingNext" @click="createNextClassroom">{{ creatingNext ? '正在创建…' : '创建下一堂课' }}</button></div>
     </header>
 
     <ReportPage v-if="showingReport" :session-id="props.sessionId" />
 
     <section v-if="snapshot?.status === 'ended'" class="surface session-ended-notice">
-      <div><p class="eyebrow">课堂已结束</p><strong>本堂课的数据已保存</strong><small>学生端已经停止播放和提问。如开播页面仍在推流，请回到开播页面点击“结束直播”。</small></div>
+      <div><p class="eyebrow">课堂已结束</p><strong>本堂课的数据已保存</strong><small>学生端已经停止接收提问、反馈和检测作答。直播画面仍由保利威播放，请回到开播页面点击“结束直播”。</small></div>
     </section>
 
     <section v-if="snapshot?.status !== 'ended' && joinCode" class="surface classroom-access-panel">
       <div><p class="eyebrow">学生入口</p><strong>课堂码 {{ joinCode }}</strong><small>学生打开统一学生端，输入课堂码和访问名称即可加入。</small></div>
       <div class="classroom-access-actions">
-        <input v-model="joinCodeDraft" maxlength="12" aria-label="设置课堂码" placeholder="设置课堂码" />
+        <input v-model="joinCodeDraft" maxlength="12" aria-label="设置课堂码" placeholder="设置课堂码" @input="joinCodeDirty = true" />
         <button type="button" :disabled="savingJoinCode || joinCodeDraft.trim().length < 4" @click="saveJoinCode">{{ savingJoinCode ? '保存中…' : '保存课堂码' }}</button>
         <a :href="studentJoinUrl" target="_blank" rel="noreferrer">打开学生端</a>
         <button type="button" :disabled="copilotState === 'waiting'" @click="connectCopilot">{{ copilotState === 'waiting' ? '正在连接…' : copilotState === 'connected' ? '开播助手已连接' : '连接开播助手' }}</button>

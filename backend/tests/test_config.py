@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from app.api.routes.shared import require_teacher, require_teacher_portal
 from app.core.auth import (
+    issue_polyv_identity_auth,
     pseudonymize_external_viewer,
     teacher_portal_token,
     token_digest,
@@ -84,7 +85,24 @@ def test_external_viewer_pseudonym_is_keyed_and_stable() -> None:
     assert first == pseudonymize_external_viewer("viewer-123", "private-key-a")
     assert first != pseudonymize_external_viewer("viewer-123", "private-key-b")
     assert "viewer-123" not in first
-    assert first.startswith("polyv_")
+    assert first.startswith("qp_")
+    assert len(first) == 64
+
+
+def test_polyv_identity_auth_matches_documented_signature_and_encodes_nickname() -> None:
+    auth = issue_polyv_identity_auth(
+        "qp_student_1",
+        "小明",
+        "app-secret",
+        timestamp_ms=1730000000123,
+    )
+
+    assert auth == {
+        "external_viewer_id": "qp_student_1",
+        "nickname": "5bCP5piO",
+        "ts": 1730000000123,
+        "sign": "175c83268ed6acebca1aa3e8935c4da2",
+    }
 
 
 class _ClassroomStub:

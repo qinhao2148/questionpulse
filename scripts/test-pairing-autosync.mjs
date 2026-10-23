@@ -28,6 +28,7 @@ function makeHarness({ path = `/teacher/${SESSION_ID}`, origin = 'http://127.0.0
   const context = {
     chrome,
     console,
+    URLSearchParams,
     setTimeout,
     clearTimeout,
     setInterval: (fn) => { intervals.push(fn); return intervals.length },

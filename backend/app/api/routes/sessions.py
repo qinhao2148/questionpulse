@@ -22,6 +22,7 @@ from app.api.routes.shared import (
 from app.core.auth import (
     issue_access_token,
     issue_join_code,
+    issue_polyv_identity_auth,
     pseudonymize_external_viewer,
     teacher_portal_token,
     token_digest,
@@ -57,13 +58,23 @@ async def create_session(
     require_teacher_portal(authorization)
     settings = get_settings()
     teacher_token = issue_access_token("qpt")
+    # join_code 有唯一索引。8 位 × 32 个字符几乎不可能撞，但真撞上会让建课直接
+    # 500，老师只会看到一句"创建失败"而无从下手。先挑一个没人用的再生效。
+    join_code = issue_join_code()
+    for _ in range(5):
+        taken = await db.scalar(
+            select(ClassroomSession.id).where(ClassroomSession.join_code == join_code)
+        )
+        if taken is None:
+            break
+        join_code = issue_join_code()
     classroom = ClassroomSession(
         title=payload.title,
         status="live",
         teacher_token_hash=token_digest(teacher_token),
         teacher_token_expires_at=datetime.now(UTC)
         + timedelta(hours=settings.access_token_ttl_hours),
-        join_code=issue_join_code(),
+        join_code=join_code,
         polyv_channel_id=settings.polyv_channel_id or None,
         polyv_session_id=settings.polyv_session_id or None,
     )
@@ -229,6 +240,16 @@ async def join_session_by_code(payload: StudentEntryRequest, db: Database) -> di
     await db.commit()
     await db.refresh(participant)
     settings = get_settings()
+    polyv_viewer_id = pseudonymize_external_viewer(
+        participant.id, settings.participant_pseudonym_key
+    )
+    polyv_identity_auth = None
+    if settings.polyv_app_secret:
+        polyv_identity_auth = issue_polyv_identity_auth(
+            polyv_viewer_id,
+            participant.display_name,
+            settings.polyv_app_secret,
+        )
     return {
         "data": {
             "session_id": classroom.id,
@@ -238,9 +259,8 @@ async def join_session_by_code(payload: StudentEntryRequest, db: Database) -> di
             "join_code": classroom.join_code,
             "polyv_channel_id": classroom.polyv_channel_id or settings.polyv_channel_id or None,
             "polyv_session_id": classroom.polyv_session_id or settings.polyv_session_id or None,
-            "polyv_viewer_id": pseudonymize_external_viewer(
-                participant.id, settings.participant_pseudonym_key
-            ),
+            "polyv_viewer_id": polyv_viewer_id,
+            "polyv_identity_auth": polyv_identity_auth,
         }
     }
 

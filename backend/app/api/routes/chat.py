@@ -1,11 +1,13 @@
 import hashlib
+import logging
 import re
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.ai import ChatQuestionDecision, DeepSeekAnalyzer, DeepSeekError
 from app.api.routes.shared import (
@@ -29,13 +31,22 @@ from app.models.classroom import (
     Participant,
     Question,
 )
+from app.models.session import ClassroomSession
 from app.schemas.classroom import ChatMessageCreate, ChatMessageReview, PolyvSyncRequest
 from app.services.embedding import normalize
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 AUTO_PROMOTE_CONFIDENCE = 0.75
 REVIEW_CONFIDENCE = 0.45
+# POLYV can return a message a little after it happened, so the incremental
+# window overlaps the previous sync slightly. Duplicates are cheap: official ids
+# deduplicate them.
+CHAT_SYNC_OVERLAP = timedelta(minutes=2)
+CHAT_SYNC_MAX_PAGES = 5
+PENDING_RECOVERY_LIMIT = 20
 QUESTION_TYPES = {
     "concept_confusion",
     "procedure_question",
@@ -181,7 +192,12 @@ async def classify_message(db: Database, classroom_title: str, message: ChatMess
             decision=classification_decision,
         )
     )
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Another worker classified this message first; its result wins.
+        await db.rollback()
+        return
 
     if classification_status == "promoted":
         async with session_cluster_gate(message.session_id):
@@ -190,6 +206,48 @@ async def classify_message(db: Database, classroom_title: str, message: ChatMess
             if current is not None and current.promoted_question_id is None:
                 await promote_chat_message(db, current)
                 await db.commit()
+
+
+async def classify_messages_in_background(bind, session_id: str, message_ids: list[str]) -> None:
+    """Classify accepted chat messages after the HTTP response has been sent.
+
+    DeepSeek needs seconds per message. Running it inside the request made the
+    learner's upload (and the teacher's sync of a whole lesson) wait for the
+    model, so the request now only stores the message and this worker decides.
+    Every message is committed on its own: one bad message never blocks the rest.
+    """
+    if not message_ids or bind is None:
+        return
+    # Derive the session from the request's engine instead of a global one: the
+    # dependency override used by the tests must apply here too.
+    async with async_sessionmaker(bind, expire_on_commit=False)() as db:
+        classroom = await db.get(ClassroomSession, session_id)
+        if classroom is None:
+            return
+        title = classroom.title
+        for message_id in message_ids:
+            try:
+                message = await db.get(ChatMessage, message_id)
+                if message is None:
+                    continue
+                await classify_message(db, title, message)
+            except Exception:
+                await db.rollback()
+                logger.exception("chat classification failed for %s", message_id)
+
+
+async def pending_message_ids(db: Database, session_id: str) -> list[str]:
+    """Messages accepted but never classified, e.g. because the process restarted."""
+    rows = await db.scalars(
+        select(ChatMessage.id)
+        .where(
+            ChatMessage.session_id == session_id,
+            ChatMessage.classification_status == "pending",
+        )
+        .order_by(ChatMessage.created_at)
+        .limit(PENDING_RECOVERY_LIMIT)
+    )
+    return list(rows)
 
 
 async def participant_for_official_viewer(
@@ -216,9 +274,10 @@ async def ingest_chat_message(
     session_id: str,
     payload: ChatMessageCreate,
     db: Database,
+    background_tasks: BackgroundTasks,
     authorization: Authorization = None,
 ) -> dict:
-    classroom = await require_active_session(db, session_id)
+    await require_active_session(db, session_id)
     participant = await resolve_student(db, session_id, authorization)
     existing = await db.scalar(
         select(ChatMessage).where(
@@ -258,8 +317,11 @@ async def ingest_chat_message(
             raise
         return {"data": {"id": existing.id, "status": existing.classification_status}}
     await db.refresh(message)
-    await classify_message(db, classroom.title, message)
-    await db.refresh(message)
+    # Stored as "pending" and classified once the response is on the wire; the
+    # student's browser must not wait for a model call that it never reads.
+    background_tasks.add_task(
+        classify_messages_in_background, db.bind, session_id, [message.id]
+    )
     return {"data": {"id": message.id, "status": message.classification_status}}
 
 
@@ -268,6 +330,7 @@ async def sync_polyv_chat_messages(
     session_id: str,
     payload: PolyvSyncRequest,
     db: Database,
+    background_tasks: BackgroundTasks,
     authorization: Authorization = None,
 ) -> dict:
     """Reconcile missed SDK events against POLYV's signed chat-history API."""
@@ -282,15 +345,17 @@ async def sync_polyv_chat_messages(
         settings.polyv_app_secret,
         timeout=settings.polyv_api_timeout_seconds,
     )
-    # The session-level timestamp is also advanced by the separate Q&A sync.
-    # Always replay this classroom's bounded window and rely on official IDs for
-    # deduplication so one source cannot make the other skip records.
-    start_at = classroom.created_at
+    # Chat keeps its own cursor. The Q&A sync advances last_synced_at, so reusing
+    # it here would make each source silently skip records belonging to the other.
+    cursor = classroom.chat_synced_at or classroom.created_at
+    start_at = cursor - CHAT_SYNC_OVERLAP
+    end_at = datetime.now()
     try:
         events = await adapter.fetch_chat_messages(
             channel_id,
             start_at=start_at,
-            end_at=datetime.now(),
+            end_at=end_at,
+            max_pages=CHAT_SYNC_MAX_PAGES,
         )
     except PolyvNotConfiguredError as exc:
         raise HTTPException(status_code=503, detail="polyv_credentials_not_configured") from exc
@@ -301,9 +366,19 @@ async def sync_polyv_chat_messages(
         await db.commit()
         raise HTTPException(status_code=502, detail="polyv_api_unavailable") from exc
 
-    accepted = duplicates = 0
+    pending_before = await pending_message_ids(db, session_id)
+    accepted = duplicates = skipped = 0
     new_messages: list[ChatMessage] = []
     for event in events:
+        # One POLYV channel hosts many live sessions. Once this classroom knows
+        # its session id, messages from a sibling classroom must not leak in.
+        if (
+            classroom.polyv_session_id
+            and event.polyv_session_id
+            and event.polyv_session_id != classroom.polyv_session_id
+        ):
+            skipped += 1
+            continue
         existing = await db.scalar(
             select(ChatMessage).where(
                 ChatMessage.session_id == session_id,
@@ -325,7 +400,13 @@ async def sync_polyv_chat_messages(
             session_id=session_id,
             participant_id=participant.id,
             external_id=event.external_id,
-            polyv_session_id=payload.polyv_session_id or classroom.polyv_session_id,
+            # A first sync binds the classroom only after the loop, so fall back
+            # to the event's own session id instead of persisting NULL here.
+            polyv_session_id=(
+                payload.polyv_session_id
+                or event.polyv_session_id
+                or classroom.polyv_session_id
+            ),
             content=event.content[:500],
             normalized_content=normalize(event.content)[:500],
             occurred_at=occurred_at,
@@ -335,20 +416,34 @@ async def sync_polyv_chat_messages(
         db.add(message)
         new_messages.append(message)
         accepted += 1
+    observed_sessions = {event.polyv_session_id for event in events if event.polyv_session_id}
+    if not classroom.polyv_session_id and len(observed_sessions) == 1:
+        # First usable sync binds this classroom to its live POLYV session, so
+        # later syncs can separate it from a sibling classroom on the same channel.
+        classroom.polyv_session_id = observed_sessions.pop()
     classroom.polyv_channel_id = channel_id
     classroom.integration_status = "connected"
     classroom.integration_error = None
     classroom.degraded_at = None
-    classroom.last_synced_at = datetime.now()
+    classroom.last_synced_at = end_at
+    classroom.chat_synced_at = end_at
     await db.commit()
-    for message in new_messages:
-        await db.refresh(message)
-        await classify_message(db, classroom.title, message)
+    # Classification is the slow part (one model call per message), so a lesson
+    # with hundreds of messages must not be classified inside this request.
+    queued = [message.id for message in new_messages] + pending_before
+    # The worker rebuilds its own session from this engine, so `db.bind` must be
+    # forwarded here too. Dropping it raises TypeError inside the background
+    # task, which surfaces only in the server log: every synced message then
+    # stays "pending" forever and never reaches the teacher panel.
+    background_tasks.add_task(
+        classify_messages_in_background, db.bind, session_id, queued
+    )
     return {
         "data": {
             "fetched": len(events),
             "accepted": accepted,
             "duplicates": duplicates,
+            "skipped": skipped,
             "integration_status": "connected",
         }
     }

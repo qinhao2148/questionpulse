@@ -21,6 +21,9 @@ class ClassroomSession(Base):
     polyv_channel_id: Mapped[str | None] = mapped_column(String(64), index=True)
     polyv_session_id: Mapped[str | None] = mapped_column(String(100), index=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Chat history and Q&A history are independent sources, so chat keeps its own
+    # cursor: advancing one must never make the other skip records.
+    chat_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     integration_error: Mapped[str | None] = mapped_column(String(200))
     degraded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

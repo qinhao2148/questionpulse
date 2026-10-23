@@ -7,11 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.api.routes import chat as chat_routes
 from app.api.routes import questions as question_routes
 from app.api.routes import sessions as session_routes
 from app.api.routes.shared import confusion_signal, is_current_classroom_event
-from app.core.auth import teacher_portal_token
-from app.core.config import get_settings
+from app.core.auth import issue_polyv_identity_auth, teacher_portal_token
+from app.core.config import Settings, get_settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.integrations.base import NormalizedQuestion
@@ -501,7 +502,9 @@ def test_polyv_contract_fixture_maps_and_deduplicates_without_live_call() -> Non
     assert question["source"] == "polyv_qa"
     assert question["external_id"] == "qa-1001"
     stored_viewers = asyncio.run(participant_keys(session_id))
-    assert stored_viewers and all(item.startswith("polyv_") for item in stored_viewers)
+    assert stored_viewers and all(
+        item.startswith("qp_") and len(item) == 64 for item in stored_viewers
+    )
     assert "polyv-viewer-a" not in stored_viewers
     degraded = client.post(
         f"/api/v1/sessions/{session_id}/integrations/polyv/drill",
@@ -841,10 +844,15 @@ def test_second_feedback_round_can_generate_another_check() -> None:
     app.dependency_overrides.clear()
 
 
-def test_second_join_keeps_earlier_tab_token_alive() -> None:
+def test_second_join_keeps_earlier_tab_token_alive(monkeypatch) -> None:
     """同一浏览器开两个标签页，先后加入不应把先开的那个踢掉。"""
     asyncio.run(reset_database())
     app.dependency_overrides[get_db] = override_db
+    monkeypatch.setattr(
+        session_routes,
+        "get_settings",
+        lambda: Settings(polyv_app_secret="app-secret", polyv_channel_id="8655930"),
+    )
     client = RoleAwareTestClient(app)
     classroom = client.post("/api/v1/sessions", json={"title": "多标签页"}).json()["data"]
     session_id = classroom["id"]
@@ -857,6 +865,15 @@ def test_second_join_keeps_earlier_tab_token_alive() -> None:
     second = client.post("/api/v1/student/join", json=payload).json()["data"]
     assert first["participant_id"] == second["participant_id"]
     assert first["access_token"] != second["access_token"]
+    assert len(first["polyv_viewer_id"]) == 64
+    identity_auth = first["polyv_identity_auth"]
+    assert identity_auth == issue_polyv_identity_auth(
+        first["polyv_viewer_id"],
+        "小明",
+        "app-secret",
+        timestamp_ms=identity_auth["ts"],
+    )
+    assert "app_secret" not in first
     for token in (first["access_token"], second["access_token"]):
         snapshot = client.get(
             f"/api/v1/sessions/{session_id}/student-snapshot",
@@ -1048,6 +1065,49 @@ def test_teacher_login_lists_all_classroom_history() -> None:
     app.dependency_overrides.clear()
 
 
+def test_chat_history_sync_classifies_into_a_cluster(monkeypatch) -> None:
+    """Teacher-side sync must not stop at storing rows.
+
+    The sync endpoint queued its classifier without the engine handle, so the
+    background task raised TypeError after the response: messages stayed
+    "pending" forever and the teacher panel looked empty even though sync
+    reported `accepted`. This asserts the whole chain, not just the counters.
+    """
+    asyncio.run(reset_database())
+    app.dependency_overrides[get_db] = override_db
+    client = RoleAwareTestClient(app)
+    classroom = client.post("/api/v1/sessions", json={"title": "聊天同步课"}).json()["data"]
+    session_id = classroom["id"]
+
+    async def history(*_args, **_kwargs):
+        return [
+            NormalizedQuestion(
+                source="polyv_chat",
+                external_id="polyv-chat-sync-1",
+                viewer_key="polyv-viewer-sync",
+                content="老师，递归的终止条件为什么必须写？",
+                occurred_at=datetime.now(UTC),
+                polyv_session_id="live-session-9",
+            )
+        ]
+
+    monkeypatch.setattr(
+        chat_routes.PolyvQuestionAdapter, "fetch_chat_messages", history
+    )
+    synced = client.post(
+        f"/api/v1/sessions/{session_id}/integrations/polyv/chat/sync",
+        json={"channel_id": "channel-sync"},
+    )
+    assert synced.status_code == 200
+    assert synced.json()["data"]["accepted"] == 1
+
+    snapshot = client.get(f"/api/v1/sessions/{session_id}/teacher-snapshot").json()
+    questions = [item for cluster in snapshot["clusters"] for item in cluster["questions"]]
+    assert [item["external_id"] for item in questions] == ["polyv-chat-sync-1"]
+    assert snapshot["pending_questions"] == []
+    app.dependency_overrides.clear()
+
+
 def test_polyv_chat_is_classified_promoted_and_idempotent() -> None:
     asyncio.run(reset_database())
     app.dependency_overrides[get_db] = override_db
@@ -1069,7 +1129,9 @@ def test_polyv_chat_is_classified_promoted_and_idempotent() -> None:
         f"/api/v1/sessions/{session_id}/chat-messages", headers=headers, json=payload
     )
     assert first.status_code == 202
-    assert first.json()["data"]["status"] == "promoted"
+    # The response is no longer allowed to wait for the model: the message is
+    # stored as pending and classified once the response has been sent.
+    assert first.json()["data"]["status"] == "pending"
     repeated = client.post(
         f"/api/v1/sessions/{session_id}/chat-messages", headers=headers, json=payload
     )

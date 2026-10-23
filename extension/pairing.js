@@ -23,7 +23,12 @@
     }, window.location.origin)
   }
 
-  function sessionIdFromPath() {
+  function sessionIdFromPage() {
+    // The console collapsed to a single route; the open classroom now lives in
+    // ?session=..., so the old /teacher/<uuid> path check never matched and the
+    // copilot kept showing whichever class it had been paired with last.
+    const fromQuery = new URLSearchParams(window.location.search).get('session') || ''
+    if (UUID_PATTERN.test(fromQuery)) return fromQuery
     const match = window.location.pathname.match(/\/teacher\/([0-9a-f-]{36})/i)
     return match ? match[1] : ''
   }
@@ -51,7 +56,7 @@
     } catch {
       return
     }
-    const sessionId = sessionIdFromPath()
+    const sessionId = sessionIdFromPage()
     const patch = {}
     if (saved.teacherToken !== token) patch.teacherToken = token
     if (saved.webBaseUrl !== window.location.origin) patch.webBaseUrl = window.location.origin

@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import secrets
+from base64 import urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
@@ -67,7 +68,36 @@ def pseudonymize_external_viewer(viewer_key: str, secret_key: str) -> str:
     digest = hmac.new(
         secret_key.encode("utf-8"), viewer_key.encode("utf-8"), hashlib.sha256
     ).hexdigest()
-    return f"polyv_{digest}"
+    # POLYV viewer ids are limited to 64 ASCII characters. Keeping the value
+    # within the documented limit also ensures chat-history ids can be mapped
+    # back to the same QuestionPulse participant without server-side truncation.
+    return f"qp_{digest[:61]}"
+
+
+def issue_polyv_identity_auth(
+    external_viewer_id: str,
+    nickname: str,
+    app_secret: str,
+    timestamp_ms: int | None = None,
+) -> dict[str, str | int]:
+    """Issue POLYV viewer-user-system direct-auth parameters.
+
+    The app secret never leaves the backend. A fresh millisecond timestamp is
+    used for every classroom join because POLYV authorization signatures are
+    short-lived and must not be reused as permanent student links.
+    """
+    timestamp = (
+        timestamp_ms if timestamp_ms is not None else int(datetime.now(UTC).timestamp() * 1000)
+    )
+    sign_text = f"{app_secret}{external_viewer_id}{app_secret}{timestamp}"
+    sign = hashlib.md5(sign_text.encode("utf-8")).hexdigest()  # noqa: S324
+    encoded_nickname = urlsafe_b64encode(nickname.encode("utf-8")).decode("ascii").rstrip("=")
+    return {
+        "external_viewer_id": external_viewer_id,
+        "nickname": encoded_nickname,
+        "ts": timestamp,
+        "sign": sign,
+    }
 
 
 def bearer_token(authorization: str | None) -> str | None:

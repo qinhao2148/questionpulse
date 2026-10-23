@@ -6,30 +6,10 @@ export interface HealthResponse {
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
-const studentTokenKey = (sessionId: string) => `questionpulse.student_token.${sessionId}`
-const studentParticipantKey = (sessionId: string) => `questionpulse.student_participant.${sessionId}`
 const teacherPortalTokenKey = 'questionpulse.teacher_portal_token'
-const studentClassroomsKey = 'questionpulse.student_classrooms'
 
 /** Shown whenever the server rejects a stale teacher portal token. */
 export const TEACHER_LOGIN_REQUIRED_MESSAGE = '教师登录已过期，请重新登录教师课堂中心'
-
-export interface LocalClassroomRecord {
-  id: string
-  title: string
-  updated_at: string
-}
-
-function readRecords(key: string): LocalClassroomRecord[] {
-  try { return JSON.parse(localStorage.getItem(key) || '[]') as LocalClassroomRecord[] } catch { return [] }
-}
-
-function saveRecord(key: string, record: LocalClassroomRecord) {
-  const records = readRecords(key).filter((item) => item.id !== record.id)
-  localStorage.setItem(key, JSON.stringify([record, ...records].slice(0, 30)))
-}
-
-export const listStudentClassrooms = () => readRecords(studentClassroomsKey)
 
 export function getTeacherPortalToken() {
   return localStorage.getItem(teacherPortalTokenKey) || ''
@@ -43,14 +23,6 @@ export function logoutTeacher() {
   localStorage.removeItem(teacherPortalTokenKey)
 }
 
-export function rememberStudentClassroom(sessionId: string, title: string) {
-  saveRecord(studentClassroomsKey, { id: sessionId, title, updated_at: new Date().toISOString() })
-}
-
-export function getStudentParticipant(sessionId: string) {
-  return localStorage.getItem(studentParticipantKey(sessionId)) || ''
-}
-
 function bearer(token: string | null): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
@@ -62,10 +34,6 @@ function teacherHeaders(sessionId: string): HeadersInit {
 
 function teacherPortalHeaders(): HeadersInit {
   return bearer(getTeacherPortalToken())
-}
-
-function studentHeaders(sessionId: string): HeadersInit {
-  return bearer(sessionStorage.getItem(studentTokenKey(sessionId)) || localStorage.getItem(studentTokenKey(sessionId)))
 }
 
 export interface Question {
@@ -297,19 +265,6 @@ export function fetchTeacherClassrooms(): Promise<TeacherClassroomSummary[]> {
   })
 }
 
-export async function joinClassroomByCode(joinCode: string, displayName: string, viewerKey: string) {
-  const result = await jsonRequest<{ data: { session_id: string; session_title: string; participant_id: string; access_token: string; join_code: string; polyv_channel_id: string | null; polyv_session_id: string | null; polyv_viewer_id: string } }>(
-    '/student/join',
-    { method: 'POST', body: JSON.stringify({ join_code: joinCode, display_name: displayName, viewer_key: viewerKey }) },
-  )
-  const sessionId = result.data.session_id
-  sessionStorage.setItem(studentTokenKey(sessionId), result.data.access_token)
-  localStorage.setItem(studentTokenKey(sessionId), result.data.access_token)
-  localStorage.setItem(studentParticipantKey(sessionId), result.data.participant_id)
-  rememberStudentClassroom(sessionId, result.data.session_title)
-  return result.data
-}
-
 export async function updateJoinCode(sessionId: string, joinCode: string) {
   const result = await jsonRequest<{ data: { join_code: string } }>(`/sessions/${sessionId}/join-code`, {
     method: 'PATCH', headers: teacherHeaders(sessionId), body: JSON.stringify({ join_code: joinCode }),
@@ -317,32 +272,9 @@ export async function updateJoinCode(sessionId: string, joinCode: string) {
   return result.data.join_code
 }
 
-export async function submitQuestion(
-  sessionId: string, participantId: string, content: string, requestId: string,
-) {
-  const result = await jsonRequest<{ data: Question }>(`/sessions/${sessionId}/questions`, {
-    method: 'POST',
-    headers: studentHeaders(sessionId),
-    body: JSON.stringify({ participant_id: participantId, client_request_id: requestId, content }),
-  })
-  return result.data
-}
-
-export function fetchStudentSnapshot(sessionId: string): Promise<Snapshot> {
-  return jsonRequest<Snapshot>(`/sessions/${sessionId}/student-snapshot`, {
-    headers: studentHeaders(sessionId),
-  })
-}
-
 export function fetchTeacherSnapshot(sessionId: string): Promise<Snapshot> {
   return jsonRequest<Snapshot>(`/sessions/${sessionId}/teacher-snapshot`, {
     headers: teacherHeaders(sessionId),
-  })
-}
-
-export function fetchStudentChecks(sessionId: string): Promise<CheckQuestion[]> {
-  return jsonRequest<CheckQuestion[]>(`/sessions/${sessionId}/checks/active`, {
-    headers: studentHeaders(sessionId),
   })
 }
 
@@ -380,18 +312,6 @@ export function closeCheck(sessionId: string, checkId: string) {
   return jsonRequest<{ data: CheckQuestion }>(`/sessions/${sessionId}/checks/${checkId}/close`, {
     method: 'POST', headers: teacherHeaders(sessionId), body: '{}',
   })
-}
-
-export function answerCheck(
-  sessionId: string, checkId: string, participantId: string, optionKey: string,
-) {
-  return jsonRequest<{ data: { selected_option_key: string; is_correct: boolean; correct_option_key: string; explanation: string } }>(
-    `/sessions/${sessionId}/checks/${checkId}/answer`,
-    {
-      method: 'PUT', headers: studentHeaders(sessionId),
-      body: JSON.stringify({ participant_id: participantId, option_key: optionKey }),
-    },
-  )
 }
 
 export async function detachQuestion(sessionId: string, questionId: string) {
@@ -447,7 +367,7 @@ export async function syncPolyvQuestions(sessionId: string) {
 }
 
 export async function syncPolyvChatMessages(sessionId: string) {
-  return jsonRequest<{ data: { accepted: number; duplicates: number; fetched: number; integration_status: string } }>(
+  return jsonRequest<{ data: { accepted: number; duplicates: number; fetched: number; skipped: number; integration_status: string } }>(
     `/sessions/${sessionId}/integrations/polyv/chat/sync`,
     { method: 'POST', headers: teacherHeaders(sessionId), body: '{}' },
   )
@@ -465,19 +385,6 @@ export async function updateClusterStatus(
   return jsonRequest<{ data: { status: string; version: number; feedback_round: number } }>(
     `/sessions/${sessionId}/clusters/${clusterId}/status`,
     { method: 'PATCH', headers: teacherHeaders(sessionId), body: JSON.stringify({ status, expected_version: expectedVersion }) },
-  )
-}
-
-export async function sendFeedback(
-  sessionId: string,
-  clusterId: string,
-  participantId: string,
-  round: number,
-  result: 'understood' | 'still_confused',
-) {
-  return jsonRequest<{ data: { result: string } }>(
-    `/sessions/${sessionId}/clusters/${clusterId}/feedback`,
-    { method: 'PUT', headers: studentHeaders(sessionId), body: JSON.stringify({ participant_id: participantId, round, result }) },
   )
 }
 

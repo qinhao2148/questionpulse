@@ -10,6 +10,9 @@ class NormalizedQuestion:
     viewer_key: str
     content: str
     occurred_at: datetime
+    # POLYV's own live session id. One channel can host many sessions over time,
+    # so this is what keeps two overlapping classrooms from sharing messages.
+    polyv_session_id: str | None = None
 
 
 class QuestionSourceAdapter(Protocol):

@@ -64,6 +64,13 @@ class PolyvQuestionAdapter:
             ),
             content=html.unescape(str(payload["content"])).replace("\u00a0", " ").strip(),
             occurred_at=occurred_at or datetime.now(UTC),
+            polyv_session_id=str(
+                payload.get("sessionId")
+                or payload.get("session_id")
+                or (payload.get("session") or {}).get("id")
+                or ""
+            )
+            or None,
         )
 
     async def _signed_get(

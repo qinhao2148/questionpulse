@@ -182,5 +182,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .teacher-login-form input:focus { border-color: #a989ff; box-shadow: 0 0 0 3px #a989ff1a; }
 @media (max-width: 900px) { .dashboard-grid, .report-grid, .teacher-login-card { grid-template-columns: 1fr; } .metrics-grid, .classroom-cards { grid-template-columns: 1fr 1fr; } .create-classroom-card { grid-template-columns: 1fr; align-items: stretch; } .page-heading { align-items: flex-start; flex-direction: column; } .connection { width: 100%; flex-wrap: wrap; } .teacher-page .page-heading > div:first-child { min-width: 0; } }
 @media (max-width: 600px) { .cluster-list, .metrics-grid, .report-hero, .classroom-cards { grid-template-columns: 1fr; } .center-heading { align-items: flex-start; flex-direction: column; } nav { gap: 10px; font-size: .74rem; } .topbar { height: auto; min-height: 64px; padding: 12px 4vw; gap: 12px; } .brand { font-size: 1rem; } .workspace { padding: 28px 4vw 60px; } .connection, .reliability-panel, .pending-row, .question-list li { align-items: stretch; flex-direction: column; } .connection button, .reliability-actions button, .pending-heading button { flex: 1; } .reliability-actions, .pending-heading, .report-actions { width: 100%; flex-wrap: wrap; } .report-hero div { border-right: 0; border-bottom: 1px solid #ffffff18; } .report-section { padding: 20px; } .rank-row { gap: 10px; } }
+/* 报告改为内嵌之后，展开报告时其他工作区内容要让位：否则「打印报告」会把
+   指标卡、聊天审核队列和疑问列表一起打进纸里。屏幕上同样只留报告，
+   避免教师一边看报告一边滚过整页工作台。 */
+.teacher-page.showing-report > header,
+.teacher-page.showing-report > section:not(.report-page),
+.teacher-page.showing-report > div,
+.teacher-page.showing-report > details { display: none; }
 @media print { .topbar, .print-button { display: none; } :root, body { color: #111; background: white; } .surface { color: #111; background: white; border-color: #ddd; box-shadow: none; } }
 

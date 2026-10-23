@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createClassroom, fetchHealth, fetchTeacherClassrooms, getTeacherPortalToken, loginTeacher, logoutTeacher, type TeacherClassroomSummary } from '../services/api'
+import { readSessionFromUrl, sessionUrl } from '../services/sessionLink'
 import TeacherPage from './TeacherPage.vue'
 
-const selectedSessionId = ref('')
+const pendingSessionId = ref(readSessionFromUrl())
+const selectedSessionId = ref(getTeacherPortalToken() ? pendingSessionId.value : '')
 const state = ref<'checking' | 'online' | 'offline'>('checking')
 const loggedIn = ref(Boolean(getTeacherPortalToken()))
 const username = ref('')
@@ -24,11 +26,24 @@ const visibleEndedClassrooms = computed(() =>
 async function loadClassrooms() { classrooms.value = await fetchTeacherClassrooms() }
 async function signIn() {
   loginError.value = ''; loginBusy.value = true
-  try { await loginTeacher(username.value.trim(), password.value); loggedIn.value = true; password.value = ''; await loadClassrooms() }
+  try {
+    await loginTeacher(username.value.trim(), password.value)
+    loggedIn.value = true
+    password.value = ''
+    if (pendingSessionId.value) {
+      // The teacher opened a deep link while logged out; resume that classroom.
+      selectedSessionId.value = pendingSessionId.value
+      pendingSessionId.value = ''
+    }
+    await loadClassrooms()
+  }
   catch (error) { loginError.value = error instanceof Error ? error.message : '登录失败，请检查账号和密码' }
   finally { loginBusy.value = false }
 }
-function signOut() { logoutTeacher(); loggedIn.value = false; classrooms.value = [] }
+function signOut() {
+  logoutTeacher(); loggedIn.value = false; classrooms.value = []
+  pendingSessionId.value = ''; selectedSessionId.value = ''
+}
 async function startClassroom() {
   createError.value = ''; creating.value = true
   try { const classroom = await createClassroom(classroomTitle.value.trim()); selectedSessionId.value = classroom.id }
@@ -52,6 +67,10 @@ async function closeClassroom() {
   selectedSessionId.value = ''
   await loadClassrooms()
 }
+
+watch(selectedSessionId, (sessionId) => {
+  window.history.replaceState(null, '', sessionUrl(sessionId))
+})
 </script>
 
 <template>

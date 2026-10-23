@@ -38,6 +38,12 @@
       .qp-status { display: inline-flex; align-items: center; gap: 6px; color: #b9edcf; font-size: 12px; }
       .qp-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #57d99a; box-shadow: 0 0 12px #57d99a; }
       .qp-list { display: grid; gap: 9px; margin-top: 10px; }
+      .qp-rooms { display: grid; gap: 8px; margin-top: 10px; }
+      .qp-room { display: grid; gap: 3px; width: 100%; text-align: left; border: 1px solid #ffffff14; border-radius: 11px; padding: 10px 11px; background: #0d0912; color: inherit; cursor: pointer; font: inherit; }
+      .qp-room:hover { border-color: #9f77ec66; background: #17101f; }
+      .qp-room[disabled] { border-color: #57d99a55; cursor: default; }
+      .qp-room b { font-size: 13px; }
+      .qp-room span { color: #a89db2; font-size: 12px; }
       .qp-cluster { border: 1px solid #ffffff12; border-radius: 12px; padding: 11px; background: #0d0912; }
       .qp-title { font-weight: 700; margin: 3px 0 7px; }
       .qp-meta { color: #a89db2; font-size: 12px; }
@@ -82,19 +88,89 @@
   let suppressOpen = false
   let showAllClusters = false
   let settingsCache = null
+  let lastRenderKey = ''
   let followAttempted = false
   let followedTitle = ''
   let followNoticeShown = false
+  let pickerRooms = null
+  let syncNote = ''
+  // Auto-pull chat history only once per classroom: POLYV rate-limits the
+  // history API and the teacher may still be typing before the lesson starts.
+  const autoSyncedSessions = new Set()
   let loginWatch
 
   function stopPolling() {
     clearInterval(timer)
     timer = undefined
+    clearTimeout(settleTimer)
+    settleTimer = undefined
   }
 
   function startPolling() {
     stopPolling()
-    if (!panel.classList.contains('qp-hidden')) timer = setInterval(refresh, 3000)
+    if (snapshot?.status === 'ended') return
+    // 面板收起时也要继续刷新，否则右上角的未处理数量会停在打开时的旧值。
+    // 展开时 3 秒一次，收起时 10 秒一次，避免无谓的请求。
+    const cadence = panel.classList.contains('qp-hidden') ? 10000 : 3000
+    timer = setInterval(() => {
+      // Pull first, then read the snapshot. Running them side by side made every
+      // sync useless for the current tick: the snapshot came back before the new
+      // message was even stored.
+      if (polling) return
+      polling = true
+      void (async () => {
+        try {
+          const pulled = await autoSyncChat()
+          await refresh()
+          if (!pulled) return
+          // Classification only starts after the response, so look again once the
+          // model has had time to finish rather than waiting for the next tick.
+          clearTimeout(settleTimer)
+          settleTimer = setTimeout(() => {
+            if (!document.hidden && !busy) void refresh()
+          }, SETTLE_REFRESH_MS)
+        } finally {
+          polling = false
+        }
+      })()
+    }, cadence)
+  }
+
+  // POLYV only exposes chat history through a pull API: nothing pushes a
+  // learner's message to us. Without this the panel stays empty until the
+  // teacher presses 同步聊天, which is exactly what looked like "no records".
+  // 6s is a compromise: a pull costs ~300ms and DeepSeek takes ~1.8s, so any
+  // shorter starts running into POLYV's rate limits for no visible gain.
+  const AUTO_SYNC_INTERVAL_MS = 6000
+  const SETTLE_REFRESH_MS = 2500
+  let lastAutoSyncAt = 0
+  let polling = false
+  let settleTimer
+
+  async function autoSyncChat() {
+    if (busy || document.hidden || !snapshot || snapshot.status === 'ended') return false
+    // Stamp before the request: a failing endpoint must not be retried on
+    // every 3-second tick.
+    if (Date.now() - lastAutoSyncAt < AUTO_SYNC_INTERVAL_MS) return false
+    lastAutoSyncAt = Date.now()
+    try {
+      const settings = await config()
+      if (!settings.sessionId) return false
+      const result = await api(
+        `/sessions/${settings.sessionId}/integrations/polyv/chat/sync`,
+        { method: 'POST', body: '{}' },
+      )
+      const data = result?.data || result || {}
+      if ((data.accepted ?? 0) > 0) {
+        syncNote = `自动同步：新增 ${data.accepted} 条，正在识别疑问…`
+        return true
+      }
+      return false
+    } catch {
+      // The manual button reports the reason; the background pull stays quiet
+      // so a broken POLYV credential does not spam the floating panel.
+      return false
+    }
   }
 
   // After a re-login the extension picks up the new token on its own. Keep
@@ -217,7 +293,9 @@
 
   function teacherUrl() {
     const base = settingsCache?.webBaseUrl || 'http://127.0.0.1:5173'
-    return settingsCache?.sessionId ? `${base}/teacher/${settingsCache.sessionId}` : `${base}/`
+    // 教师端已收敛为单页，课堂在页面内切换，用 ?session= 才能直接落到这堂课。
+    const sessionId = settingsCache?.sessionId || ''
+    return sessionId ? `${base}/?session=${encodeURIComponent(sessionId)}` : `${base}/`
   }
 
   function teacherHomeUrl() {
@@ -231,15 +309,90 @@
     return fromQuery ? fromQuery[1] : ''
   }
 
+  function ongoingRooms(rooms) {
+    return (rooms || []).filter((room) => room.status !== 'ended')
+  }
+
   function pickLiveClassroom(rooms, channel) {
-    const live = (rooms || []).filter((room) => room.status === 'live')
+    const live = ongoingRooms(rooms)
     if (!live.length) return null
     const channelId = channel || pageChannelId()
     const sameChannel = channelId ? live.find((room) => room.polyv_channel_id === channelId) : null
     if (sameChannel) return sameChannel
-    // Only guess when there is exactly one live classroom. With several, stay
-    // put rather than silently showing a class the teacher is not teaching.
+    // Only guess when there is exactly one unended classroom. With several, let
+    // the teacher pick instead of silently showing a class they are not teaching.
     return live.length === 1 ? live[0] : null
+  }
+
+  function roomRow(room, currentId) {
+    const current = room.id === currentId
+    const created = room.created_at
+      ? new Date(room.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : ''
+    return `<button class="qp-room" data-adopt="${escapeHtml(room.id)}"${current ? ' disabled' : ''}>
+      <b>${escapeHtml(room.title)}${current ? '（当前）' : ''}</b>
+      <span>${room.join_code ? `加入码 ${escapeHtml(room.join_code)} · ` : ''}${room.question_count} 条疑问${created ? ` · ${escapeHtml(created)} 创建` : ''}</span>
+    </button>`
+  }
+
+  function bindRoomRows() {
+    root.querySelectorAll('[data-adopt]').forEach((button) => button.addEventListener('click', adoptFromPicker))
+  }
+
+  async function openRoomPicker(rooms, message = '') {
+    stopPolling()
+    if (!rooms) {
+      // 每次都重新拉一遍，别复用上一次选择器留下的列表。
+      try {
+        rooms = await api('/teacher/sessions')
+      } catch (error) {
+        pickerRooms = null
+        renderError(error)
+        return
+      }
+    }
+    pickerRooms = rooms
+    renderRoomPicker(message)
+  }
+
+  function renderRoomPicker(message = '') {
+    stopPolling()
+    lastRenderKey = ''
+    const rooms = ongoingRooms(pickerRooms)
+    const currentId = settingsCache?.sessionId || ''
+    const subtitle = root.querySelector('.qp-brand small')
+    if (subtitle) subtitle.textContent = '选择要连接的课堂'
+    body.innerHTML = `
+      <section class="qp-card">
+        <div class="qp-eyebrow">ONGOING CLASSROOMS</div><strong>进行中的课堂</strong>
+        <p class="qp-muted">选一堂，之后面板上的操作都作用到这堂课。切换会先确认一次，因为绑错课堂会改到别的班的疑问和检测。</p>
+        ${message ? `<div class="qp-note">${escapeHtml(message)}</div>` : ''}
+        ${rooms.length ? `<div class="qp-rooms">${rooms.map((room) => roomRow(room, currentId)).join('')}</div>` : '<div class="qp-empty">还没有未结束的课堂，先去教师端创建一堂。</div>'}
+        <div class="qp-actions" style="margin-top:10px">
+          ${currentId ? '<button class="qp-button" id="qp-picker-cancel">返回</button>' : ''}
+          <a class="qp-button" href="${teacherHomeUrl()}" target="_blank" rel="noopener">教师课堂中心</a>
+        </div>
+      </section>`
+    bindRoomRows()
+    root.getElementById('qp-picker-cancel')?.addEventListener('click', () => {
+      pickerRooms = null
+      lastRenderKey = ''
+      refresh()
+    })
+  }
+
+  async function adoptFromPicker(event) {
+    const id = event.currentTarget.dataset.adopt
+    const room = ongoingRooms(pickerRooms).find((item) => item.id === id)
+    if (!room || id === settingsCache?.sessionId) return
+    if (!window.confirm(`切换到《${room.title}》？\n${room.join_code ? `加入码 ${room.join_code}\n` : ''}之后面板上的操作都会作用到这堂课。`)) return
+    pickerRooms = null
+    await adoptClassroom(room)
+    // 手动切换不是「上一堂课结束后自动跟随」，别把那条提示也点亮。
+    followedTitle = ''
+    followNoticeShown = true
+    followAttempted = true
+    await refresh()
   }
 
   async function adoptClassroom(target) {
@@ -251,7 +404,6 @@
 
   function renderArchived() {
     const clusters = snapshot?.clusters || []
-    const base = settingsCache?.webBaseUrl || 'http://127.0.0.1:5173'
     count.classList.add('qp-hidden')
     body.innerHTML = `
       <section class="qp-card">
@@ -263,8 +415,8 @@
         <strong>助手还连着上一堂课</strong>
         <p class="qp-muted">切到当前正在进行中的课堂，这里会重新加载实时疑问。教师令牌不需要重新输入。</p>
         <div class="qp-actions">
-          <button class="qp-button primary" id="qp-switch">切换到当前课堂</button>
-          <a class="qp-button" href="${base}/report/${snapshot.id}" target="_blank" rel="noopener">查看课后报告</a>
+          <button class="qp-button primary" id="qp-switch">选择进行中的课堂</button>
+          <a class="qp-button" href="${teacherUrl()}" target="_blank" rel="noopener">在教师后台查看报告</a>
         </div>
         <div class="qp-note qp-hidden" id="qp-switch-note"></div>
       </section>
@@ -279,16 +431,21 @@
     button.disabled = true
     try {
       const rooms = await api('/teacher/sessions')
-      const live = pickLiveClassroom(rooms, snapshot?.polyv_channel_id)
-      if (!live) {
+      const live = ongoingRooms(rooms)
+      if (!live.length) {
         if (note) {
           note.classList.remove('qp-hidden')
           note.textContent = '当前没有进行中的课堂。请先在教师端创建并开始一堂课。'
         }
-        button.disabled = false
         return
       }
-      await adoptClassroom(live)
+      if (live.length > 1) {
+        // 多堂课同时在跑的时候让老师自己选，猜错就是改到别人的课堂。
+        await openRoomPicker(live, '有不止一堂课还没结束，选一堂继续。')
+        return
+      }
+      await adoptClassroom(live[0])
+      followedTitle = ''
       followAttempted = true
       followNoticeShown = false
       await refresh()
@@ -314,11 +471,36 @@
     }
   }
 
+  function renderKey() {
+    const clusters = snapshot?.clusters || []
+    return JSON.stringify({
+      title: snapshot?.title,
+      status: snapshot?.status,
+      joinCode: snapshot?.join_code || '',
+      pending: snapshot?.pending_questions?.length || 0,
+      all: showAllClusters,
+      followed: followedTitle,
+      note: syncNote,
+      clusters: clusters.map((item) => [
+        item.id, item.status, item.version, item.question_count,
+        item.participant_count, item.confusion_score, item.feedback?.still_confused,
+      ]),
+      checks: (checks || []).map((item) => [
+        item.id, item.status, item.response_count, item.correct_count,
+      ]),
+    })
+  }
+
   function renderSnapshot() {
     stopLoginWatch()
     setConnectionState(true)
     const subtitle = root.querySelector('.qp-brand small')
     if (subtitle) subtitle.textContent = snapshot?.title ? `当前课堂：${snapshot.title}` : 'Teacher Copilot'
+    // 原来每 3 秒整体重建面板，滚动位置和刚点下去的按钮状态都会被冲掉。
+    // 数据没变化时直接复用现有 DOM。
+    const key = renderKey()
+    if (key === lastRenderKey && body.childElementCount) return
+    lastRenderKey = key
     if (snapshot?.status === 'ended') {
       clearInterval(timer)
       renderArchived()
@@ -334,7 +516,8 @@
       ${followedTitle && !followNoticeShown ? `<section class="qp-card"><div class="qp-eyebrow">AUTO SWITCHED</div><div class="qp-meta">上一堂课《${escapeHtml(followedTitle)}》已结束，助手已自动切到当前课堂。</div></section>` : ''}
       <section class="qp-card">
         <div class="qp-row"><div><div class="qp-eyebrow">LIVE CLASSROOM</div><strong>${escapeHtml(snapshot.title)}</strong></div><span class="qp-status">${snapshot.status === 'ended' ? '已归档' : '已连接'}</span></div>
-        <div class="qp-meta">${clusters.length} 个疑问簇 · ${snapshot.pending_questions.length} 条待处理</div>
+        <div class="qp-meta">${clusters.length} 个疑问簇 · ${snapshot.pending_questions.length} 条待处理${snapshot.join_code ? ` · 加入码 <b>${escapeHtml(snapshot.join_code)}</b>` : ''}</div>
+        <div class="qp-actions"><button class="qp-button" id="qp-picker">切换课堂</button></div>
       </section>
       <section class="qp-card">
         <div class="qp-eyebrow">QUESTION PRIORITY</div><strong>当前高优先级疑问</strong>
@@ -354,18 +537,21 @@
               ${snapshot.status !== 'ended' && check?.status === 'draft' ? `<div class="qp-actions"><button class="qp-button" data-approve-check="${check.id}">审核并发布检测</button></div>` : ''}
               ${snapshot.status !== 'ended' && check?.status === 'active' ? `<div class="qp-actions"><button class="qp-button" data-close-check="${check.id}">结束检测</button></div>` : ''}
             </article>`
-          }).join('') || '<div class="qp-empty">暂时没有课堂疑问</div>'}
+          }).join('') || `<div class="qp-empty">暂时没有课堂疑问${snapshot.status === 'ended' ? '' : '<br><span class="qp-muted">学生在保利威聊天框里的提问不会自动推送，点下方「同步聊天」拉取</span>'}</div>`}
         </div>
         ${priorityClusters.length > 3 ? `<div class="qp-actions"><button class="qp-button" id="qp-toggle-clusters">${showAllClusters ? '仅看 Top 3' : `查看全部 ${priorityClusters.length} 个待处理疑问`}</button></div>` : ''}
       </section>
       <section class="qp-card">
-        <div class="qp-row"><span class="qp-muted">完整配置、原始问题和报告请在教师后台查看。</span><div class="qp-links"><a class="qp-button" href="${teacherUrl()}" target="_blank" rel="noopener">打开教师端</a><button class="qp-button" id="qp-refresh">刷新</button></div></div>
+        <div class="qp-row"><span class="qp-muted">完整配置、原始问题和报告请在教师后台查看。</span><div class="qp-links"><a class="qp-button" href="${teacherUrl()}" target="_blank" rel="noopener">打开教师端</a><button class="qp-button" id="qp-sync">同步聊天</button><button class="qp-button" id="qp-refresh">刷新</button></div></div>
+        ${syncNote ? `<div class="qp-note">${escapeHtml(syncNote)}</div>` : ''}
         <div class="qp-meta" style="margin-top:10px">直播已经结束？结束这堂课会归档当前疑问，助手不再显示它。</div>
         <div class="qp-actions"><button class="qp-button" id="qp-end">结束这堂课</button></div>
       </section>
     `
     if (followedTitle) followNoticeShown = true
     root.getElementById('qp-refresh')?.addEventListener('click', refresh)
+    root.getElementById('qp-sync')?.addEventListener('click', syncChatClick)
+    root.getElementById('qp-picker')?.addEventListener('click', () => openRoomPicker())
     root.getElementById('qp-end')?.addEventListener('click', endClassroom)
     root.getElementById('qp-toggle-clusters')?.addEventListener('click', () => {
       showAllClusters = !showAllClusters
@@ -381,9 +567,10 @@
     stopPolling()
     stopLoginWatch()
     setConnectionState(false)
+    lastRenderKey = ''
     let saved = {}
     try {
-      saved = await storageGet(['apiBaseUrl', 'sessionId'])
+      saved = await storageGet(['apiBaseUrl', 'sessionId', 'teacherToken'])
     } catch {
       saved = {}
     }
@@ -400,8 +587,25 @@
           <button class="qp-button primary" type="submit">保存并连接</button>
           ${message ? `<div class="qp-error">${escapeHtml(message)}</div>` : ''}
         </form>
-      </section>`
+      </section>
+      <div id="qp-setup-rooms"></div>`
     root.getElementById('qp-form').addEventListener('submit', saveSetup)
+    if (saved.teacherToken) await fillSetupRooms()
+  }
+
+  // 已经有令牌的情况下，让老师直接点列表里的课堂，省掉手抄课堂 ID 那一步。
+  async function fillSetupRooms() {
+    const slot = root.getElementById('qp-setup-rooms')
+    if (!slot) return
+    try {
+      const rooms = ongoingRooms(await api('/teacher/sessions'))
+      if (!rooms.length || !root.getElementById('qp-setup-rooms')) return
+      pickerRooms = rooms
+      slot.innerHTML = `<section class="qp-card"><div class="qp-eyebrow">ONGOING CLASSROOMS</div><strong>从进行中的课堂里选</strong><div class="qp-rooms">${rooms.map((room) => roomRow(room, '')).join('')}</div></section>`
+      bindRoomRows()
+    } catch {
+      // 列表只是省打字，拉不到就保留手动表单。
+    }
   }
 
   async function saveSetup(event) {
@@ -438,6 +642,50 @@
     }
   }
 
+  async function syncChat(button) {
+    if (busy) return
+    busy = true
+    if (button) {
+      button.disabled = true
+      button.textContent = '同步中…'
+    }
+    try {
+      const settings = await config()
+      if (!settings.sessionId) return
+      const result = await api(
+        `/sessions/${settings.sessionId}/integrations/polyv/chat/sync`,
+        { method: 'POST', body: '{}' },
+      )
+      const data = result?.data || result || {}
+      const fetched = data.fetched ?? 0
+      const accepted = data.accepted ?? 0
+      const duplicates = data.duplicates ?? 0
+      syncNote = accepted
+        ? `已拉取 ${fetched} 条，新增 ${accepted} 条（去重 ${duplicates} 条），正在识别疑问…`
+        : `已拉取 ${fetched} 条，没有新消息（去重 ${duplicates} 条）`
+    } catch (error) {
+      syncNote = error instanceof Error ? `同步失败：${error.message}` : '同步失败'
+    } finally {
+      busy = false
+      if (button) {
+        button.disabled = false
+        button.textContent = '同步聊天'
+      }
+      lastAutoSyncAt = Date.now()
+      await refresh()
+      // The model starts only after the response, so the list needs one more
+      // read a few seconds later to show the newly formed cluster.
+      clearTimeout(settleTimer)
+      settleTimer = setTimeout(() => {
+        if (!document.hidden && !busy) void refresh()
+      }, SETTLE_REFRESH_MS)
+    }
+  }
+
+  function syncChatClick(event) {
+    return syncChat(event.currentTarget)
+  }
+
   async function checkAction(button, path) {
     if (busy) return
     busy = true
@@ -468,6 +716,7 @@
   function renderError(error) {
     stopPolling()
     setConnectionState(false)
+    lastRenderKey = ''
     const subtitle = root.querySelector('.qp-brand small')
     if (subtitle) subtitle.textContent = 'Teacher Copilot'
     const rawMessage = error instanceof Error ? error.message : '连接失败'
@@ -530,6 +779,18 @@
           return refresh()
         }
       }
+      if (
+        snapshot?.status !== 'ended'
+        && !snapshot.last_synced_at
+        && !autoSyncedSessions.has(settings.sessionId)
+      ) {
+        autoSyncedSessions.add(settings.sessionId)
+        // A brand-new classroom has never pulled POLYV's chat history, so the
+        // panel would look empty even after learners type. Pull once on first
+        // open; later messages stay manual because the history API is rate
+        // limited and polling it every few seconds is wasteful.
+        void syncChat()
+      }
       renderSnapshot()
       if (snapshot?.status === 'ended') stopPolling()
       else startPolling()
@@ -556,7 +817,7 @@
     panel.classList.add('qp-hidden')
     orb.classList.remove('qp-hidden')
     keepInsideViewport()
-    stopPolling()
+    startPolling()
   }
 
   enableDrag(orb)

@@ -17,7 +17,7 @@ function extract(name) {
 }
 
 function load(location) {
-  const body = `${extract('pageChannelId')}\n${extract('pickLiveClassroom')}\nreturn { pageChannelId, pickLiveClassroom }`
+  const body = `${extract('pageChannelId')}\n${extract('ongoingRooms')}\n${extract('pickLiveClassroom')}\nreturn { pageChannelId, pickLiveClassroom }`
   // eslint-disable-next-line no-new-func
   return new Function('location', body)(location)
 }
