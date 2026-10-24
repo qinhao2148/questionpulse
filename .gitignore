@@ -43,3 +43,25 @@ assets/competition/poster/crops-3000px/
 
 # Knowledge base uploaded files and parsed artifacts
 storage/knowledge/
+
+# Keep repository submissions source-only; retain documentation locally.
+docs/
+*.md
+*.mdx
+*.rst
+*.pdf
+*.doc
+*.docx
+*.ppt
+*.pptx
+**/LICENSE
+**/LICENSE.*
+**/CHANGELOG
+**/CHANGELOG.*
+**/CONTRIBUTING
+**/CONTRIBUTING.*
+**/CODE_OF_CONDUCT
+**/CODE_OF_CONDUCT.*
+**/SECURITY
+**/SECURITY.*
+assets/poster/
