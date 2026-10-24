@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.knowledge import CitationView, RagAnswerView
+
 
 class SessionCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
@@ -117,6 +119,7 @@ class CheckQuestionView(BaseModel):
     stem: str
     options: list[CheckOptionView]
     source: str
+    knowledge_backed: bool = False
     explanation: str | None = None
     correct_option_key: str | None = None
     target_count: int = 0
@@ -177,6 +180,15 @@ class ClusterView(BaseModel):
     questions: list[QuestionView]
 
 
+class StudentPublishedAnswer(BaseModel):
+    answer_id: str
+    question_id: str | None
+    question_content: str | None
+    answer: str | None
+    citations: list[CitationView] = Field(default_factory=list)
+    published_at: datetime | None
+
+
 class Snapshot(BaseModel):
     id: str
     title: str
@@ -191,6 +203,10 @@ class Snapshot(BaseModel):
     degraded_at: datetime | None
     clusters: list[ClusterView]
     pending_questions: list[QuestionView]
+    # Teacher view only: AI answers drafted over the classroom knowledge base.
+    rag_answers: list[RagAnswerView] = Field(default_factory=list)
+    # Student view only: answers the teacher published for this participant.
+    published_answers: list[StudentPublishedAnswer] = Field(default_factory=list)
 
 
 class ReportCluster(BaseModel):
@@ -219,6 +235,16 @@ class ReportAIInsight(BaseModel):
     semantic_reason: str
     recommendation: str
     model: str
+
+
+class KnowledgeGapItem(BaseModel):
+    # A rejected / failed / insufficient-evidence answer marks a topic where
+    # the knowledge base underperformed: wrong content or missing material.
+    question: str
+    answer_excerpt: str | None
+    reason: str | None
+    kind: str  # rejected | failed | insufficient
+    occurred_at: datetime
 
 
 class SessionReport(BaseModel):
@@ -250,4 +276,5 @@ class SessionReport(BaseModel):
     clusters: list[ReportCluster]
     follow_ups: list[ReportCluster]
     timeline: list[ReportTimelineEvent]
+    knowledge_gaps: list[KnowledgeGapItem] = Field(default_factory=list)
     ai_insights: list[ReportAIInsight]

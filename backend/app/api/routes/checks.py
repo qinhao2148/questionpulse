@@ -69,6 +69,23 @@ async def generate_check_question(
     questions = list(
         await db.scalars(select(Question.content).where(Question.cluster_id == cluster_id).limit(8))
     )
+
+    # Link the quiz to the classroom knowledge base: contexts come from the
+    # frozen snapshot so the check is answerable from the bound documents.
+    knowledge_contexts: list[dict] = []
+    try:
+        from app.knowledge.retrieval import search_classroom_knowledge
+
+        retrieved = await search_classroom_knowledge(
+            db, session_id, " ".join([cluster.title, *questions[:2]]), limit=6
+        )
+        knowledge_contexts = [
+            {"source": chunk.document_title, "content": chunk.content}
+            for chunk in retrieved[: settings.rag_context_limit]
+        ]
+    except Exception:  # noqa: BLE001 - knowledge retrieval must not block checks
+        knowledge_contexts = []
+
     draft = fallback_quiz(cluster)
     source = "local_fallback"
     if settings.llm_api_key:
@@ -94,7 +111,9 @@ async def generate_check_question(
                 timeout=settings.llm_timeout_seconds,
                 max_output_tokens=settings.llm_max_output_tokens,
             )
-            draft, usage = await analyzer.generate_quiz(classroom.title, cluster.title, questions)
+            draft, usage = await analyzer.generate_quiz(
+                classroom.title, cluster.title, questions, knowledge_contexts or None
+            )
             source = "deepseek"
             run.status = "succeeded"
             run.prompt_tokens = usage["prompt_tokens"]
@@ -114,6 +133,7 @@ async def generate_check_question(
         correct_option_key=draft.correct_option_key,
         explanation=draft.explanation,
         source=source,
+        knowledge_backed=bool(knowledge_contexts) and source == "deepseek",
     )
     db.add(check)
     await db.flush()

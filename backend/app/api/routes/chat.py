@@ -200,12 +200,24 @@ async def classify_message(db: Database, classroom_title: str, message: ChatMess
         return
 
     if classification_status == "promoted":
+        promoted_question_id = None
         async with session_cluster_gate(message.session_id):
             await db.commit()
             current = await db.get(ChatMessage, message.id)
             if current is not None and current.promoted_question_id is None:
-                await promote_chat_message(db, current)
+                question = await promote_chat_message(db, current)
                 await db.commit()
+                promoted_question_id = question.id
+        if promoted_question_id is not None:
+            # We are already in the background classification context, so the
+            # RAG retrieval + LLM answer can run here without blocking anyone.
+            from app.knowledge.answering import draft_answer_for_question
+
+            try:
+                await draft_answer_for_question(db, message.session_id, promoted_question_id)
+            except Exception:  # noqa: BLE001 - draft failure is recorded in the row
+                await db.rollback()
+                logger.exception("rag draft failed for %s", promoted_question_id)
 
 
 async def classify_messages_in_background(bind, session_id: str, message_ids: list[str]) -> None:
@@ -516,6 +528,7 @@ async def decide_chat_message(
     session_id: str,
     message_id: str,
     payload: ChatMessageReview,
+    background_tasks: BackgroundTasks,
     db: Database,
     authorization: Authorization = None,
 ) -> dict:
@@ -545,6 +558,9 @@ async def decide_chat_message(
         classification.decision = "teacher_promoted"
         classification.decided_by = "teacher"
         await db.commit()
+        from app.knowledge.answering import queue_draft_if_knowledge_bound
+
+        await queue_draft_if_knowledge_bound(background_tasks, db, session_id, question.id)
         return {
             "data": {
                 "id": message.id,

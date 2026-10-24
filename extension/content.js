@@ -16,46 +16,46 @@
       :host { all: initial; }
       * { box-sizing: border-box; }
       button, input { font: inherit; }
-      .qp-orb { width: 58px; height: 58px; border: 1px solid #b99cff88; border-radius: 50%; color: white; cursor: grab; touch-action: none; background: radial-gradient(circle at 35% 30%, #cdb6ff 0 8%, #8657e8 28%, #2b1749 72%); box-shadow: 0 10px 35px #6d35d988, inset 0 0 18px #e1d4ff44; position: relative; display: grid; place-items: center; }
+      .qp-orb { width: 58px; height: 58px; border: 1px solid #b9ccff; border-radius: 50%; color: white; cursor: grab; touch-action: none; background: radial-gradient(circle at 35% 30%, #6f97ff 0 12%, #2f6bff 60%, #1d54d8 100%); box-shadow: 0 10px 26px #2f6bff55, inset 0 0 12px #ffffff33; position: relative; display: grid; place-items: center; }
       .qp-orb.qp-disconnected { filter: grayscale(1); opacity: .72; box-shadow: 0 8px 24px #0008; }
       .qp-orb.qp-disconnected::after { animation: none; border-color: #a9a1af55; }
       .qp-orb::after { content: ''; width: 72px; height: 72px; position: absolute; border-radius: 50%; border: 1px solid #a77cff55; animation: qp-pulse 2.4s ease-out infinite; }
       .qp-orb span { font: 700 16px/1 system-ui, sans-serif; }
       .qp-count { position: absolute; right: -3px; top: -5px; min-width: 21px; height: 21px; padding: 0 5px; border-radius: 11px; background: #ff4d78; display: grid; place-items: center; font: 700 11px/1 system-ui, sans-serif; }
-      .qp-panel { width: min(390px, calc(100vw - 32px)); max-height: min(690px, calc(100vh - 32px)); overflow: auto; border: 1px solid #ffffff1f; border-radius: 20px; color: #f7f2ff; background: linear-gradient(160deg, #181021 0%, #09070d 80%); box-shadow: 0 20px 70px #000a; font: 14px/1.45 Inter, system-ui, sans-serif; }
+      .qp-panel { width: min(390px, calc(100vw - 32px)); max-height: min(690px, calc(100vh - 32px)); overflow: auto; border: 1px solid #e2e8f0; border-radius: 14px; color: #16233c; background: #ffffff; box-shadow: 0 16px 44px rgba(22, 33, 58, 0.2); font: 14px/1.45 Inter, system-ui, sans-serif; }
       .qp-hidden { display: none !important; }
-      .qp-header { position: sticky; top: 0; z-index: 2; padding: 18px 18px 14px; background: #130d1bdd; backdrop-filter: blur(14px); border-bottom: 1px solid #ffffff12; display: flex; justify-content: space-between; gap: 12px; align-items: center; cursor: grab; touch-action: none; }
+      .qp-header { position: sticky; top: 0; z-index: 2; padding: 18px 18px 14px; background: #ffffffee; backdrop-filter: blur(14px); border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; gap: 12px; align-items: center; cursor: grab; touch-action: none; }
       .qp-brand { display: flex; gap: 10px; align-items: center; }
       .qp-brand small { display: block; max-width: 195px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .qp-mini-orb { width: 30px; height: 30px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #d7c7ff, #7f4bd8 40%, #27143f 80%); box-shadow: 0 0 20px #8d5de977; }
+      .qp-mini-orb { width: 30px; height: 30px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #6f97ff, #2f6bff 60%, #1d54d8 90%); box-shadow: 0 0 14px #2f6bff44; }
       .qp-header strong, .qp-card strong { display: block; }
       .qp-header small, .qp-muted { color: #a89db2; font-size: 12px; }
-      .qp-icon { border: 0; background: transparent; color: #cabbe0; cursor: pointer; font-size: 20px; }
+      .qp-icon { border: 0; background: transparent; color: #8593a9; cursor: pointer; font-size: 20px; }
       .qp-body { padding: 16px; display: grid; gap: 12px; }
-      .qp-card { border: 1px solid #ffffff14; border-radius: 15px; background: #ffffff08; padding: 14px; }
+      .qp-card { border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; padding: 14px; }
       .qp-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
       .qp-eyebrow { color: #aa7cff; font-size: 10px; font-weight: 800; letter-spacing: .14em; margin-bottom: 5px; }
       .qp-status { display: inline-flex; align-items: center; gap: 6px; color: #b9edcf; font-size: 12px; }
       .qp-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #57d99a; box-shadow: 0 0 12px #57d99a; }
       .qp-list { display: grid; gap: 9px; margin-top: 10px; }
       .qp-rooms { display: grid; gap: 8px; margin-top: 10px; }
-      .qp-room { display: grid; gap: 3px; width: 100%; text-align: left; border: 1px solid #ffffff14; border-radius: 11px; padding: 10px 11px; background: #0d0912; color: inherit; cursor: pointer; font: inherit; }
-      .qp-room:hover { border-color: #9f77ec66; background: #17101f; }
+      .qp-room { display: grid; gap: 3px; width: 100%; text-align: left; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 11px; background: #ffffff; color: inherit; cursor: pointer; font: inherit; }
+      .qp-room:hover { border-color: #2f6bff66; background: #ecf1ff; }
       .qp-room[disabled] { border-color: #57d99a55; cursor: default; }
       .qp-room b { font-size: 13px; }
       .qp-room span { color: #a89db2; font-size: 12px; }
-      .qp-cluster { border: 1px solid #ffffff12; border-radius: 12px; padding: 11px; background: #0d0912; }
+      .qp-cluster { border: 1px solid #e2e8f0; border-radius: 12px; padding: 11px; background: #ffffff; }
       .qp-title { font-weight: 700; margin: 3px 0 7px; }
       .qp-meta { color: #a89db2; font-size: 12px; }
-      .qp-ai { margin-top: 8px; padding: 8px 9px; border-radius: 9px; color: #ddcff7; background: #9f77ec14; font-size: 12px; }
+      .qp-ai { margin-top: 8px; padding: 8px 9px; border-radius: 9px; color: #1d54d8; background: #ecf1ff; font-size: 12px; }
       .qp-ai small { display: block; margin-top: 4px; color: #a89db2; line-height: 1.45; }
       .qp-actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
-      .qp-button { border: 1px solid #9f77ec66; border-radius: 9px; background: #6f41bd33; color: #efe7ff; cursor: pointer; padding: 7px 10px; font-size: 12px; }
-      .qp-button.primary { border-color: #9e72ff; background: #8254de; }
+      .qp-button { border: 1px solid #cbd5e1; border-radius: 9px; background: #ffffff; color: #16233c; cursor: pointer; padding: 7px 10px; font-size: 12px; }
+      .qp-button.primary { border-color: #2f6bff; background: #2f6bff; color: #ffffff; }
       .qp-button:disabled { opacity: .5; cursor: wait; }
       .qp-form { display: grid; gap: 9px; }
       .qp-form label { display: grid; gap: 4px; color: #cfc4d9; font-size: 12px; }
-      .qp-form input { width: 100%; border: 1px solid #ffffff1f; border-radius: 9px; background: #08060b; color: white; padding: 9px 10px; }
+      .qp-form input { width: 100%; border: 1px solid #cbd5e1; border-radius: 9px; background: #ffffff; color: #16233c; padding: 9px 10px; }
       .qp-error { color: #ff94ab; font-size: 12px; white-space: pre-wrap; }
       .qp-empty { color: #a89db2; text-align: center; padding: 16px 4px; }
       .qp-status.qp-ended { color: #a89db2; }

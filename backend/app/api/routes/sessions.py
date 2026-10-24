@@ -250,10 +250,13 @@ async def join_session_by_code(payload: StudentEntryRequest, db: Database) -> di
             participant.display_name,
             settings.polyv_app_secret,
         )
+    # 本地墙上时间（与 end_session 的约定一致）：观看端浏览器用本地时区
+    # Date.parse 还原为毫秒，避免服务端/数据库时区差异。
     return {
         "data": {
             "session_id": classroom.id,
             "session_title": classroom.title,
+            "session_created_at": classroom.created_at.isoformat(),
             "participant_id": participant.id,
             "access_token": student_token,
             "join_code": classroom.join_code,

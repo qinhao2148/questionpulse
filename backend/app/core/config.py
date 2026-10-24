@@ -44,6 +44,30 @@ class Settings(BaseSettings):
     teacher_password: str = DEFAULT_TEACHER_PASSWORD
     teacher_portal_secret: str = DEFAULT_TEACHER_PORTAL_SECRET
 
+    # Knowledge base / RAG. Generation always uses the configured LLM API; the
+    # embedding model runs in-process via fastembed (no model serving) and can
+    # degrade to the deterministic hash embedder when it is unavailable.
+    knowledge_storage_path: str = "../storage/knowledge"
+    qdrant_url: str = "http://127.0.0.1:6333"
+    qdrant_api_key: str = ""
+    qdrant_collection: str = "questionpulse_knowledge_v1"
+    qdrant_timeout_seconds: float = 10.0
+    embedding_provider: str = "fastembed"
+    embedding_model: str = "BAAI/bge-small-zh-v1.5"
+    embedding_dimensions: int = 512
+    knowledge_max_file_mb: int = 50
+    knowledge_worker_poll_seconds: float = 2.0
+    # A cross-process in-memory vector store silently loses data (the worker
+    # writes where the API can never read), so it is test-only by default.
+    knowledge_allow_memory_vector_store: bool = False
+    knowledge_job_lease_seconds: int = 300
+    knowledge_job_max_attempts: int = 3
+    rag_top_k: int = 20
+    rag_context_limit: int = 6
+    rag_min_score: float = 0.35
+    rag_timeout_seconds: float = 30.0
+    rag_max_output_tokens: int = 1500
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def split_origins(cls, value: object) -> object:
@@ -60,6 +84,23 @@ class Settings(BaseSettings):
     @classmethod
     def default_llm_model(cls, value: object) -> object:
         return value or "deepseek-flash"
+
+    @field_validator("embedding_model", mode="before")
+    @classmethod
+    def default_embedding_model(cls, value: object) -> object:
+        # .env ships an empty EMBEDDING_MODEL= line; treat it as unset so the
+        # fastembed default still applies.
+        return value or "BAAI/bge-small-zh-v1.5"
+
+    @field_validator("qdrant_url", mode="before")
+    @classmethod
+    def default_qdrant_url(cls, value: object) -> object:
+        return value or "http://127.0.0.1:6333"
+
+    @field_validator("knowledge_storage_path", mode="before")
+    @classmethod
+    def default_knowledge_storage_path(cls, value: object) -> object:
+        return value or "../storage/knowledge"
 
     @model_validator(mode="after")
     def reject_development_credentials_in_production(self) -> "Settings":

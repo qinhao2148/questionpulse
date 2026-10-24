@@ -106,6 +106,15 @@ onMounted(loadReport)
         </article>
         <p v-if="!report.ai_insights.length" class="empty-state">当前还没有可用的智能分析建议。</p>
       </section>
+      <section v-if="report.knowledge_gaps?.length" class="surface report-section ai-insight-section">
+        <p class="eyebrow">知识库优化</p><h2>建议补充或修订的资料</h2>
+        <p class="evidence-note">以下问题在答疑时被驳回、生成失败或依据不足，是知识库需要补充或修订的信号。</p>
+        <article v-for="gap in report.knowledge_gaps" :key="`${gap.question}-${gap.occurred_at}`" class="ai-insight-card">
+          <div><strong>{{ gap.question }}</strong><span>{{ gap.kind === 'rejected' ? '教师驳回' : gap.kind === 'failed' ? '生成失败' : '资料依据不足' }}</span></div>
+          <p v-if="gap.reason"><b>原因：</b>{{ gap.reason }}</p>
+          <p v-if="gap.answer_excerpt"><b>当时的回答：</b>{{ gap.answer_excerpt }}</p>
+        </article>
+      </section>
       <section class="surface report-section timeline-section">
         <p class="eyebrow">课堂过程</p><h2>疑问处理时间线</h2>
         <div v-for="(event, index) in report.timeline" :key="`${event.occurred_at}-${index}`" class="timeline-row">

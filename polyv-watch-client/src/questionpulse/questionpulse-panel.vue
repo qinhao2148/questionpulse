@@ -132,8 +132,36 @@
           </p>
         </section>
 
+        <section
+          v-for="answer in publishedAnswers"
+          :key="answer.answer_id"
+          class="questionpulse-card questionpulse-rag"
+        >
+          <small>教师与 AI 共同回答</small>
+          <p
+            v-if="answer.question_content"
+            class="questionpulse-rag__question"
+          >
+            同学提问：{{ answer.question_content }}
+          </p>
+          <p class="questionpulse-rag__answer">
+            {{ answer.answer }}
+          </p>
+          <ul
+            v-if="answer.citations.length"
+            class="questionpulse-rag__citations"
+          >
+            <li
+              v-for="citation in answer.citations"
+              :key="`${answer.answer_id}-${citation.location}`"
+            >
+              依据：{{ citation.location }}
+            </li>
+          </ul>
+        </section>
+
         <p
-          v-if="!activeClusters.length && !checks.length"
+          v-if="!activeClusters.length && !checks.length && !publishedAnswers.length"
           class="questionpulse-empty"
         >
           聊天中的课程疑问会自动识别并汇总给教师。
@@ -169,6 +197,7 @@ import {
   uploadQuestionPulseChat,
   type QuestionPulseCheck,
   type QuestionPulseCluster,
+  type QuestionPulsePublishedAnswer,
   type QuestionPulseSnapshot,
 } from './api';
 
@@ -199,6 +228,10 @@ const activeClusters = computed<QuestionPulseCluster[]>(() =>
   (snapshot.value?.clusters || []).filter(cluster =>
     ['addressing', 'awaiting_feedback'].includes(cluster.status),
   ),
+);
+// Answers the teacher reviewed and published over the classroom knowledge base.
+const publishedAnswers = computed<QuestionPulsePublishedAnswer[]>(
+  () => snapshot.value?.published_answers || [],
 );
 const connectionLabel = computed(() => {
   if (joinMode) return '学生入口';
@@ -360,10 +393,10 @@ onBeforeUnmount(() => {
   overflow: hidden;
   font-size: 14px;
   color: #172033;
-  background: rgba(255, 255, 255, 0.97);
-  border: 1px solid rgba(118, 139, 255, 0.35);
-  border-radius: 18px;
-  box-shadow: 0 18px 50px rgba(17, 27, 68, 0.24);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(22, 33, 58, 0.16);
 }
 .questionpulse-panel.is-join-mode {
   inset: 0;
@@ -439,23 +472,47 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #dfe3f7;
+  border: 1px solid #e2e8f0;
   border-radius: 9px;
 }
 .questionpulse-join button {
   color: white;
   cursor: pointer;
-  background: #5667ed;
+  background: #2f6bff;
   border: 0;
 }
 .questionpulse-card {
   padding: 12px;
   margin-bottom: 10px;
-  background: #f5f6ff;
+  background: #ffffff;
   border-radius: 12px;
 }
+.questionpulse-rag__question {
+  margin: 5px 0 4px;
+  font-weight: 600;
+}
+.questionpulse-rag__answer {
+  padding: 8px 10px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.7;
+  background: white;
+  border-left: 3px solid #2f6bff;
+  border-radius: 0 8px 8px 0;
+}
+.questionpulse-rag__citations {
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.questionpulse-rag__citations li {
+  font-size: 12px;
+  color: #1d54d8;
+}
 .questionpulse-card small {
-  color: #6270d8;
+  color: #52627c;
 }
 .questionpulse-card h3 {
   margin: 5px 0 10px;
@@ -472,22 +529,22 @@ onBeforeUnmount(() => {
   padding: 9px 10px;
   color: white;
   cursor: pointer;
-  background: #5667ed;
+  background: #2f6bff;
   border: 0;
   border-radius: 9px;
 }
 .questionpulse-actions .secondary {
-  color: #4f5dbf;
-  background: #e4e7ff;
+  color: #1d54d8;
+  background: #ecf1ff;
 }
 .questionpulse-option {
   display: block;
   width: 100%;
   margin-top: 6px;
-  color: #26325c;
+  color: #16233c;
   text-align: left;
   background: white;
-  border: 1px solid #dfe3f7;
+  border: 1px solid #e2e8f0;
 }
 .questionpulse-option:disabled {
   cursor: default;
@@ -516,7 +573,7 @@ onBeforeUnmount(() => {
 }
 .questionpulse-option.selected {
   background: #f0f2ff;
-  border-color: #5667ed;
+  border-color: #2f6bff;
 }
 .questionpulse-switch {
   width: 100%;

@@ -25,6 +25,7 @@ from app.models.classroom import (
     Question,
 )
 from app.schemas.classroom import (
+    KnowledgeGapItem,
     ReportAIInsight,
     ReportCluster,
     ReportTimelineEvent,
@@ -177,6 +178,54 @@ async def get_report(
         ).all()
     )
     report_by_cluster = {item.id: item for item in report_clusters}
+
+    # Knowledge-gap signals: rejected / failed / insufficient-evidence answers
+    # tell the teacher which topics need new or corrected documents.
+    from app.models.knowledge import RagAnswer
+
+    gap_rows = list(
+        await db.scalars(
+            select(RagAnswer)
+            .where(
+                RagAnswer.session_id == session_id,
+                (
+                    RagAnswer.answer_status.in_(["rejected", "failed"])
+                    | RagAnswer.insufficient_evidence.is_(True)
+                ),
+                RagAnswer.question_id.is_not(None),
+            )
+            .order_by(RagAnswer.created_at.desc())
+            .limit(15)
+        )
+    )
+    gap_questions = {
+        q.id: q
+        for q in await db.scalars(
+            select(Question).where(
+                Question.id.in_([a.question_id for a in gap_rows])
+            )
+        )
+    }
+    knowledge_gaps = []
+    for answer in gap_rows:
+        question = gap_questions.get(answer.question_id)
+        kind = (
+            "rejected"
+            if answer.answer_status == "rejected"
+            else "failed"
+            if answer.answer_status == "failed"
+            else "insufficient"
+        )
+        knowledge_gaps.append(
+            KnowledgeGapItem(
+                question=question.content if question else "（未知问题）",
+                answer_excerpt=(answer.answer or "")[:120] or None,
+                reason=answer.reject_reason or answer.error_code,
+                kind=kind,
+                occurred_at=answer.created_at,
+            )
+        )
+
     ai_insights = []
     seen_insight_clusters = set()
     for decision, run in decision_rows:
@@ -230,4 +279,5 @@ async def get_report(
         follow_ups=[item for item in report_clusters if item.feedback.still_confused > 0],
         timeline=timeline,
         ai_insights=ai_insights,
+        knowledge_gaps=knowledge_gaps,
     )

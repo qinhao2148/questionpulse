@@ -40,3 +40,6 @@ archive/generated-poster-crops/
 assets/competition/poster/crops-1800px/
 assets/competition/poster/crops-3000px/
 
+
+# Knowledge base uploaded files and parsed artifacts
+storage/knowledge/

@@ -158,7 +158,11 @@ class DeepSeekAnalyzer:
             raise DeepSeekError(type(exc).__name__) from exc
 
     async def generate_quiz(
-        self, classroom_title: str, cluster_title: str, questions: list[str]
+        self,
+        classroom_title: str,
+        cluster_title: str,
+        questions: list[str],
+        knowledge_contexts: list[dict] | None = None,
     ) -> tuple[QuizDraft, dict[str, int]]:
         if not self.api_key:
             raise DeepSeekError("deepseek_not_configured")
@@ -182,6 +186,15 @@ class DeepSeekAnalyzer:
                 "explanation": "答案解析",
             },
         }
+        if knowledge_contexts:
+            prompt["knowledge_contexts"] = knowledge_contexts
+            prompt["instructions"] = (
+                "根据群体疑问和提供的 knowledge_contexts 生成一道用于讲解后即时检测的中文单选题。"
+                "题干、选项和答案必须能从 knowledge_contexts 中找到依据，"
+                "explanation 末尾标注依据的资料名称，如（依据：《员工手册》）。"
+                "knowledge_contexts 覆盖不了的学生问题不要出成考题。"
+                "只有一个正确答案，干扰项应能识别常见误解。输出 json。"
+            )
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(

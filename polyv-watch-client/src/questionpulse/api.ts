@@ -13,11 +13,30 @@ export interface QuestionPulseCluster {
   questions: Array<{ id: string }>;
 }
 
+export interface QuestionPulseCitation {
+  document_title: string;
+  version_number: number;
+  section_path?: string | null;
+  page_start?: number | null;
+  page_end?: number | null;
+  location: string;
+}
+
+export interface QuestionPulsePublishedAnswer {
+  answer_id: string;
+  question_id: string | null;
+  question_content: string | null;
+  answer: string | null;
+  citations: QuestionPulseCitation[];
+  published_at: string | null;
+}
+
 export interface QuestionPulseSnapshot {
   id: string;
   title: string;
   status: string;
   clusters: QuestionPulseCluster[];
+  published_answers?: QuestionPulsePublishedAnswer[];
 }
 
 export interface QuestionPulseCheck {
@@ -224,6 +243,9 @@ export async function joinQuestionPulseClassroom(joinCode: string, displayName: 
     ts: String(identityAuth.ts),
     sign: identityAuth.sign,
     qpSessionId: classroom.session_id,
+    // 课堂创建时间（本地墙上时间 ISO）：浏览器按本地时区解析为毫秒，
+    // 聊天列表据此隐藏上一个课堂的历史消息。
+    qpSessionStart: String(Date.parse(classroom.session_created_at) || ''),
     qpApiBase: apiBase,
   });
   const handoff = new URLSearchParams({

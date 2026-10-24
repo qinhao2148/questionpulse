@@ -205,6 +205,8 @@ export const useQueryParams = (opts?: {
     nickname: buildGetters('nickname'),
     /** QuestionPulse 用户体系独立授权昵称（URL-safe Base64） */
     qpIdentityNickname: buildGetters('qpIdentityNickname'),
+    /** QuestionPulse 当前课堂创建时间（毫秒），用于过滤上一堂课的聊天历史 */
+    qpSessionStart: buildGetters('qpSessionStart'),
     /** 观众头像 */
     avatar: buildGetters('avatar'),
     /** 网络类型 */

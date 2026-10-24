@@ -15,7 +15,7 @@ foreach ($port in 5173, 8000, 15021) {
     $listeners = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
     foreach ($listener in $listeners) {
         $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)"
-        if ($processInfo.CommandLine -match 'vite|uvicorn|webpack') {
+        if ($processInfo.CommandLine -match 'vite|uvicorn|webpack|knowledge_worker') {
             Stop-Process -Id $listener.OwningProcess -Force
         }
     }

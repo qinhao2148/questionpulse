@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from sqlalchemy import select
 
 from app.api.routes.shared import (
@@ -43,7 +43,11 @@ router = APIRouter()
 
 @router.post("/sessions/{session_id}/questions", status_code=status.HTTP_202_ACCEPTED)
 async def submit_question(
-    session_id: str, payload: QuestionCreate, db: Database, authorization: Authorization = None
+    session_id: str,
+    payload: QuestionCreate,
+    background_tasks: BackgroundTasks,
+    db: Database,
+    authorization: Authorization = None,
 ) -> dict:
     classroom = await require_session(db, session_id)
     if classroom.status == "ended":
@@ -92,6 +96,9 @@ async def submit_question(
         )
         await db.commit()
         await db.refresh(question)
+        from app.knowledge.answering import queue_draft_if_knowledge_bound
+
+        await queue_draft_if_knowledge_bound(background_tasks, db, session_id, question.id)
         return {"data": question_view(question).model_dump(mode="json"), "idempotent": False}
 
 

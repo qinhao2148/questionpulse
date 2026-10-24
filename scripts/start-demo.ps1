@@ -7,8 +7,8 @@ $sessionFile = Join-Path $runtimeDir 'demo-session.json'
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 Set-Location $projectRoot
 
-docker compose up -d mysql
-if ($LASTEXITCODE -ne 0) { throw 'MySQL startup failed.' }
+docker compose up -d mysql qdrant
+if ($LASTEXITCODE -ne 0) { throw 'MySQL/Qdrant startup failed.' }
 
 Push-Location (Join-Path $projectRoot 'backend')
 try {
@@ -36,8 +36,19 @@ $frontend = Start-Process -FilePath 'pnpm.cmd' -ArgumentList @(
 $watchClient = Start-Process -FilePath 'npm.cmd' -ArgumentList @(
     'run', 'dev'
 ) -WorkingDirectory (Join-Path $projectRoot 'polyv-watch-client') -WindowStyle Hidden -PassThru
+# Knowledge ingestion worker: parses uploaded documents, builds chunk vectors
+# and publishes document versions. The API process also attempts each job
+# inline, so the worker is an accelerator, not a hard dependency.
+$knowledgeWorker = Start-Process -FilePath 'uv' -ArgumentList @(
+    'run', 'python', '-m', 'app.workers.knowledge_worker'
+) -WorkingDirectory (Join-Path $projectRoot 'backend') -WindowStyle Hidden -PassThru
 
-@{ backend_pid = $backend.Id; frontend_pid = $frontend.Id; watch_client_pid = $watchClient.Id } |
+@{
+    backend_pid = $backend.Id
+    frontend_pid = $frontend.Id
+    watch_client_pid = $watchClient.Id
+    knowledge_worker_pid = $knowledgeWorker.Id
+} |
     ConvertTo-Json | Set-Content -LiteralPath $pidFile -Encoding utf8
 
 $ready = $false

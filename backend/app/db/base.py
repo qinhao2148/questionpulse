@@ -14,6 +14,19 @@ from app.models.classroom import (
     Question,
     Submission,
 )
+from app.models.knowledge import (
+    KnowledgeBase,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    KnowledgeDocumentVersion,
+    KnowledgeIngestionJob,
+    Organization,
+    RagAnswer,
+    RagCitation,
+    SessionKnowledgeBinding,
+    SessionKnowledgeSnapshot,
+    SessionKnowledgeSnapshotItem,
+)
 from app.models.session import ClassroomSession
 
 __all__ = [
@@ -29,7 +42,18 @@ __all__ = [
     "ClusterEvent",
     "Feedback",
     "FeedbackTarget",
+    "KnowledgeBase",
+    "KnowledgeChunk",
+    "KnowledgeDocument",
+    "KnowledgeDocumentVersion",
+    "KnowledgeIngestionJob",
+    "Organization",
     "Participant",
     "Question",
+    "RagAnswer",
+    "RagCitation",
+    "SessionKnowledgeBinding",
+    "SessionKnowledgeSnapshot",
+    "SessionKnowledgeSnapshotItem",
     "Submission",
 ]

@@ -4,29 +4,49 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ReportPage from './ReportPage.vue'
 
 import {
+  actOnRagAnswer,
   approveCheck,
+  archiveKnowledgeBase,
   closeCheck,
   createClassroom,
+  createKnowledgeBase,
   detachQuestion,
   endClassroom,
+  fetchKnowledgeBases,
+  fetchKnowledgeDocuments,
+  fetchKnowledgeStatus,
+  fetchSessionKnowledge,
   fetchTeacherSnapshot,
   fetchTeacherChecks,
   fetchChatReviewQueue,
   generateCheck,
   getTeacherAccessToken,
   hasTeacherAccess,
+  regenerateRagAnswer,
+  replaceSessionBindings,
+  retryDocumentVersion,
   retryQuestion,
   retryPendingQuestions,
   reviewChatMessage,
   runIntegrationDrill,
+  searchKnowledgePreview,
   syncPolyvChatMessages,
   syncPolyvQuestions,
   updateClusterStatus,
   updateJoinCode,
+  uploadDocumentVersion,
+  uploadKnowledgeDocument,
   verifyPolyvContract,
+  type BindingInput,
   type Cluster,
   type CheckQuestion,
   type ChatReviewItem,
+  type KnowledgeBaseView,
+  type KnowledgeDocumentView,
+  type KnowledgeSearchHit,
+  type KnowledgeStatusView,
+  type RagAnswerView,
+  type SessionKnowledgeView,
   type Snapshot,
   TEACHER_LOGIN_REQUIRED_MESSAGE,
 } from '../services/api'
@@ -420,7 +440,15 @@ async function createCheck() {
   error.value = ''
   try {
     await generateCheck(props.sessionId, selected.value.id)
-    integrationMessage.value = '理解检测草稿已生成，请审核答案与解释后再发布。'
+    await refresh()
+    // Refresh first so the flag on the new draft drives the message.
+    const created = checks.value.find(
+      (item) => item.cluster_id === selected.value?.id
+        && item.feedback_round === (selected.value?.feedback_round ?? 0),
+    )
+    integrationMessage.value = created?.knowledge_backed
+      ? '检测题已基于课堂知识资料生成，请审核后再发布。'
+      : '注意：本主题在知识库中没有匹配资料，检测题仅基于学生问题生成——请人工核对答案，或先补充相关资料。'
     await refresh()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '生成检测失败'
@@ -466,6 +494,240 @@ onBeforeUnmount(() => {
   if (copilotTimer) window.clearTimeout(copilotTimer)
   stopPolling()
 })
+
+// ---------------------------------------------------------------- knowledge
+
+const activeView = ref<'interaction' | 'session' | 'library' | 'report'>('interaction')
+const ragAnswers = computed(() => snapshot.value?.rag_answers ?? [])
+const ragBusyId = ref('')
+const sessionKnowledge = ref<SessionKnowledgeView | null>(null)
+const sessionKnowledgeLoading = ref(false)
+const bindingDrafts = ref<Record<string, BindingInput>>({})
+const bindingSelected = ref<Record<string, boolean>>({})
+const knowledgeStatus = ref<KnowledgeStatusView | null>(null)
+const knowledgeBases = ref<KnowledgeBaseView[]>([])
+const libraryDocuments = ref<KnowledgeDocumentView[]>([])
+const selectedKbId = ref('')
+const newKbName = ref('')
+const libraryBusy = ref(false)
+const uploadFileInput = ref<HTMLInputElement | null>(null)
+const searchQuery = ref('')
+const searchHits = ref<KnowledgeSearchHit[]>([])
+const searchBusy = ref(false)
+const versionTitleDrafts = ref<Record<string, File>>({})
+
+const selectedKb = computed(() => knowledgeBases.value.find((base) => base.id === selectedKbId.value))
+const activeBindings = computed(() => sessionKnowledge.value?.bindings ?? [])
+const snapshotDocuments = computed(() => sessionKnowledge.value?.snapshot_documents ?? [])
+const snapshotFrozen = computed(() => Boolean(sessionKnowledge.value?.frozen_at))
+
+const ragStatusLabel: Record<string, string> = {
+  draft: '待审核', approved: '已通过', published: '已发布', failed: '生成失败',
+}
+
+async function loadSessionKnowledge() {
+  sessionKnowledgeLoading.value = true
+  try {
+    sessionKnowledge.value = await fetchSessionKnowledge(props.sessionId)
+    bindingDrafts.value = {}
+    bindingSelected.value = {}
+    for (const base of knowledgeBases.value.length ? knowledgeBases.value : await fetchKnowledgeBases()) {
+      const existing = sessionKnowledge.value?.bindings.find((b) => b.knowledge_base_id === base.id)
+      bindingDrafts.value[base.id] = {
+        knowledge_base_id: base.id,
+        document_id: existing?.document_id ?? null,
+        binding_scope: existing ? existing.binding_scope as BindingInput['binding_scope'] : 'whole_knowledge_base',
+        follow_latest: existing?.follow_latest ?? false,
+      }
+      bindingSelected.value[base.id] = Boolean(existing)
+    }
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '读取课堂资料失败'
+  } finally {
+    sessionKnowledgeLoading.value = false
+  }
+}
+
+async function saveBindings() {
+  const bindings = Object.values(bindingDrafts.value).filter(
+    (item) => bindingSelected.value[item.knowledge_base_id],
+  )
+  libraryBusy.value = true
+  try {
+    await replaceSessionBindings(props.sessionId, bindings)
+    integrationMessage.value = '课堂资料范围已更新。'
+    await loadSessionKnowledge()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '保存课堂资料失败'
+  } finally {
+    libraryBusy.value = false
+  }
+}
+
+async function loadLibrary() {
+  libraryBusy.value = true
+  try {
+    if (!knowledgeStatus.value) knowledgeStatus.value = await fetchKnowledgeStatus()
+    knowledgeBases.value = await fetchKnowledgeBases()
+    if (!selectedKbId.value && knowledgeBases.value.length) selectedKbId.value = knowledgeBases.value[0].id
+    libraryDocuments.value = selectedKbId.value ? await fetchKnowledgeDocuments(selectedKbId.value) : []
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '读取知识库失败'
+  } finally {
+    libraryBusy.value = false
+  }
+}
+
+function switchView(view: 'interaction' | 'session' | 'library' | 'report') {
+  activeView.value = view
+  // 报告视图复用 showingReport：轮询暂停与打印样式都依赖它。
+  showingReport.value = view === 'report'
+  if (view === 'session') void loadSessionKnowledge()
+  if (view === 'library') void loadLibrary()
+}
+
+async function createKb() {
+  const name = newKbName.value.trim()
+  if (!name) return
+  libraryBusy.value = true
+  try {
+    await createKnowledgeBase(name)
+    newKbName.value = ''
+    await loadLibrary()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '创建知识库失败'
+  } finally {
+    libraryBusy.value = false
+  }
+}
+
+async function archiveKb(baseId: string) {
+  if (!window.confirm('归档后新课堂不能再选择该知识库。确定归档吗？')) return
+  libraryBusy.value = true
+  try {
+    await archiveKnowledgeBase(baseId)
+    if (selectedKbId.value === baseId) selectedKbId.value = ''
+    await loadLibrary()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '归档失败'
+  } finally {
+    libraryBusy.value = false
+  }
+}
+
+function triggerUpload() {
+  uploadFileInput.value?.click()
+}
+
+async function onUploadPicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !selectedKbId.value) return
+  libraryBusy.value = true
+  integrationMessage.value = ''
+  try {
+    const title = file.name.replace(/\.[^.]+$/, '')
+    await uploadKnowledgeDocument(selectedKbId.value, file, title, '', '')
+    integrationMessage.value = `《${title}》已上传，正在解析和建立索引…`
+    // Inline ingestion usually finishes in a few seconds; poll twice so the
+    // teacher sees the ready state without pressing refresh.
+    window.setTimeout(() => void loadLibrary(), 2500)
+    window.setTimeout(() => void loadLibrary(), 6000)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '上传失败'
+  } finally {
+    libraryBusy.value = false
+  }
+}
+
+function onVersionPicked(event: Event, documentId: string) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (file) versionTitleDrafts.value[documentId] = file
+}
+
+async function uploadVersion(documentId: string) {
+  const file = versionTitleDrafts.value[documentId]
+  if (!file) return
+  libraryBusy.value = true
+  try {
+    await uploadDocumentVersion(documentId, file, '')
+    delete versionTitleDrafts.value[documentId]
+    integrationMessage.value = '新版本已上传，旧课堂仍使用原版本。'
+    window.setTimeout(() => void loadLibrary(), 2500)
+    window.setTimeout(() => void loadLibrary(), 6000)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '版本上传失败'
+  } finally {
+    libraryBusy.value = false
+  }
+}
+
+async function retryVersion(versionId: string) {
+  libraryBusy.value = true
+  try {
+    await retryDocumentVersion(versionId)
+    integrationMessage.value = '已重新排队处理。'
+    window.setTimeout(() => void loadLibrary(), 2500)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '重试失败'
+  } finally {
+    libraryBusy.value = false
+  }
+}
+
+async function doSearch() {
+  const query = searchQuery.value.trim()
+  if (!query) return
+  searchBusy.value = true
+  try {
+    searchHits.value = await searchKnowledgePreview(
+      selectedKbId.value ? [selectedKbId.value] : knowledgeBases.value.map((base) => base.id), query,
+    )
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '检索失败'
+  } finally {
+    searchBusy.value = false
+  }
+}
+
+async function ragAction(answer: RagAnswerView, action: string) {
+  if (action === 'publish' && !window.confirm('发布后答案会出现在全班学生的课堂页面上，确定发布吗？')) return
+  let reason = ''
+  if (action === 'reject') {
+    // 拒绝原因进入课后报告的知识库优化建议：缺资料还是答错了。
+    const promptMessage =
+      '驳回原因（将计入课堂报告的知识库优化建议，可留空）：\n例如：资料里没有这个内容 / 答案与资料不符 / 引用了过期条款'
+    reason = window.prompt(promptMessage) ?? ''
+    if (reason.trim() === '' && !window.confirm('不填原因直接驳回吗？')) return
+  }
+  ragBusyId.value = answer.id
+  error.value = ''
+  try {
+    await actOnRagAnswer(props.sessionId, answer.id, action, reason.trim() || undefined)
+    await refresh()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '操作失败'
+  } finally {
+    ragBusyId.value = ''
+  }
+}
+
+async function regenerateAnswer(answer: RagAnswerView) {
+  if (!answer.question_id) return
+  ragBusyId.value = answer.id
+  try {
+    await regenerateRagAnswer(props.sessionId, answer.question_id)
+    integrationMessage.value = '正在重新检索资料并生成答案…'
+    window.setTimeout(() => void refresh(), 4000)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '重新生成失败'
+  } finally {
+    ragBusyId.value = ''
+  }
+}
 </script>
 
 <template>
@@ -481,11 +743,146 @@ onBeforeUnmount(() => {
     <template v-else>
     <header class="page-heading">
       <div><p class="eyebrow">教师工作台</p><h1>{{ snapshot.title }}</h1><p>{{ snapshot.status === 'ended' ? '课堂已结束 · 数据只读' : '实时汇总学生疑问与理解反馈' }}</p></div>
-      <div class="connection"><span class="live-dot"></span><div><strong>{{ connectionTitle }}</strong><small>{{ error || integrationMessage || (snapshot.status === 'ended' ? '可查看报告或创建下一堂课' : '新问题会自动出现在下方') }}</small></div><button @click="emit('close')">课堂列表</button><button @click="refresh">刷新</button><button class="button-link" @click="showingReport = !showingReport">{{ showingReport ? '收起报告' : '课堂报告' }}</button><button v-if="snapshot.status !== 'ended'" @click="syncPolyv">同步聊天与提问</button><button v-if="snapshot.status !== 'ended'" class="danger-action" :disabled="ending" @click="finishClassroom">{{ ending ? '正在结束…' : '结束课堂' }}</button><button v-else class="primary-action" :disabled="creatingNext" @click="createNextClassroom">{{ creatingNext ? '正在创建…' : '创建下一堂课' }}</button></div>
+      <div class="connection"><span class="live-dot"></span><div><strong>{{ connectionTitle }}</strong><small>{{ error || integrationMessage || (snapshot.status === 'ended' ? '可查看报告或创建下一堂课' : '新问题会自动出现在下方') }}</small></div><button @click="emit('close')">课堂列表</button><button @click="refresh">刷新</button><button v-if="snapshot.status !== 'ended'" @click="syncPolyv">同步聊天与提问</button><button v-if="snapshot.status !== 'ended'" class="danger-action" :disabled="ending" @click="finishClassroom">{{ ending ? '正在结束…' : '结束课堂' }}</button><button v-else class="primary-action" :disabled="creatingNext" @click="createNextClassroom">{{ creatingNext ? '正在创建…' : '创建下一堂课' }}</button></div>
     </header>
 
-    <ReportPage v-if="showingReport" :session-id="props.sessionId" />
+    <ReportPage v-if="activeView === 'report'" :session-id="props.sessionId" />
 
+    <nav class="knowledge-tabs" role="tablist">
+      <button type="button" :class="{ active: activeView === 'interaction' }" @click="switchView('interaction')">课堂互动</button>
+      <button type="button" :class="{ active: activeView === 'session' }" @click="switchView('session')">课堂资料</button>
+      <button type="button" :class="{ active: activeView === 'library' }" @click="switchView('library')">知识库</button>
+      <button type="button" :class="{ active: activeView === 'report' }" @click="switchView('report')">课堂报告</button>
+    </nav>
+
+    <template v-if="activeView === 'session'">
+    <section class="surface knowledge-panel">
+      <div class="pending-heading">
+        <div><p class="eyebrow">课堂资料</p><h2>本课堂的知识范围</h2></div>
+        <button v-if="snapshot.status !== 'ended' && !snapshotFrozen" :disabled="libraryBusy || sessionKnowledgeLoading" @click="saveBindings">保存资料范围</button>
+      </div>
+      <p v-if="snapshotFrozen" class="mode-note">本课堂已开始基于资料答疑，资料范围已锁定（{{ sessionKnowledge?.frozen_at ? new Date(sessionKnowledge.frozen_at).toLocaleString('zh-CN') : '' }}）。如需更换资料请创建新课堂。</p>
+      <p v-else class="mode-note">勾选的知识库会作为本课堂 AI 检索的资料来源。第一次真实答疑后范围自动锁定，保证课堂中答案不会随资料更新而改变。</p>
+      <p v-if="!knowledgeBases.length" class="empty-state">还没有知识库，请先到“知识库”页签创建并上传资料。</p>
+      <div v-for="base in knowledgeBases" :key="base.id" class="binding-row">
+        <label class="binding-check">
+          <input
+            type="checkbox"
+            :checked="bindingSelected[base.id]"
+            :disabled="snapshotFrozen || base.document_count === 0"
+            @change="bindingSelected[base.id] = ($event.target as HTMLInputElement).checked"
+          />
+          <span><strong>{{ base.name }}</strong><small>{{ base.document_count }} 份文档{{ base.document_count === 0 ? '（空知识库）' : '' }}</small></span>
+        </label>
+      </div>
+      <template v-if="snapshotDocuments.length">
+        <h3>已生效的资料版本</h3>
+        <ul class="snapshot-doc-list">
+          <li v-for="doc in snapshotDocuments" :key="doc.document_version_id">
+            <strong>《{{ doc.document_title }}》</strong>
+            <small>v{{ doc.version_number }} · {{ doc.status === 'ready' ? '可检索' : doc.status }} · {{ doc.chunk_count ?? 0 }} 段</small>
+          </li>
+        </ul>
+      </template>
+      <p v-else class="empty-state">尚未绑定资料：AI 答疑功能在本课堂保持关闭。</p>
+    </section>
+    </template>
+
+    <template v-if="activeView === 'library'">
+    <section class="surface knowledge-panel">
+      <div class="pending-heading">
+        <div><p class="eyebrow">知识库</p><h2>企业培训资料管理</h2></div>
+        <button :disabled="libraryBusy" @click="loadLibrary">刷新</button>
+      </div>
+      <p v-if="knowledgeStatus?.status === 'unavailable'" class="warn-text">向量库不可用（{{ knowledgeStatus.error_code }}）：上传与检索已暂停，请检查 Qdrant 服务后重试。</p>
+      <p v-else-if="knowledgeStatus" class="mode-note">
+        向量引擎：{{ knowledgeStatus.vector_store === 'qdrant' ? 'Qdrant（已连接）' : knowledgeStatus.vector_store }} ·
+        语义模型：{{ knowledgeStatus.embedding.model_name }}
+        <span v-if="knowledgeStatus.embedding.degraded" class="warn-text">（降级模式，检索质量有限）</span>
+      </p>
+      <div class="library-layout">
+        <div class="library-sidebar">
+          <div class="kb-create">
+            <input v-model="newKbName" maxlength="200" placeholder="新知识库名称" @keydown.enter="createKb" />
+            <button :disabled="libraryBusy || !newKbName.trim()" @click="createKb">创建</button>
+          </div>
+          <button
+            v-for="base in knowledgeBases"
+            :key="base.id"
+            type="button"
+            class="surface cluster-card kb-card"
+            :class="{ selected: selectedKbId === base.id }"
+            @click="selectedKbId = base.id; loadLibrary()"
+          >
+            <strong>{{ base.name }}</strong>
+            <small>{{ base.document_count }} 份文档</small>
+          </button>
+          <p v-if="!knowledgeBases.length" class="empty-state">还没有知识库。</p>
+        </div>
+        <div class="library-main">
+          <template v-if="selectedKb">
+            <div class="kb-toolbar">
+              <strong>{{ selectedKb.name }}</strong>
+              <button :disabled="libraryBusy || knowledgeStatus?.status === 'unavailable'" @click="triggerUpload">上传文档</button>
+              <button class="button-link" @click="archiveKb(selectedKb.id)">归档知识库</button>
+              <input
+                ref="uploadFileInput"
+                type="file"
+                accept=".pdf,.docx,.pptx,.md,.markdown,.txt"
+                style="display: none"
+                @change="onUploadPicked"
+              />
+            </div>
+            <p class="mode-note">支持 PDF、Word（.docx）、PPT（.pptx）、Markdown、文本。上传后自动解析、切片并建立语义索引。</p>
+            <div v-for="doc in libraryDocuments" :key="doc.id" class="surface kb-doc-card">
+              <div class="card-row">
+                <strong>《{{ doc.title }}》</strong>
+                <span v-if="doc.current_version" class="status" :class="doc.current_version.status === 'ready' ? 'closed' : 'open'">
+                  {{ doc.current_version.status === 'ready' ? `已就绪 · v${doc.current_version.version_number}` : doc.current_version.status === 'failed' ? '处理失败 · 可重试' : doc.current_version.status === 'dead' ? '任务中断 · 请重试或联系管理员' : `解析中 · ${doc.current_version.status}` }}
+                </span>
+                <span v-else class="status open">等待处理</span>
+              </div>
+              <p v-if="doc.current_version?.error_code" class="warn-text">失败原因：{{ doc.current_version.error_code }}</p>
+              <p class="mode-note" v-if="doc.current_version">
+                {{ doc.current_version.chunk_count ?? 0 }} 段文本 · {{ doc.current_version.embedding_model || '索引中' }}
+                · 上传于 {{ new Date(doc.current_version.created_at).toLocaleString('zh-CN') }}
+              </p>
+              <div class="kb-doc-actions">
+                <label class="version-picker">
+                  <input type="file" accept=".pdf,.docx,.pptx,.md,.markdown,.txt" @change="(event) => onVersionPicked(event, doc.id)" />
+                  <small v-if="versionTitleDrafts[doc.id]">已选：{{ versionTitleDrafts[doc.id].name }}</small>
+                </label>
+                <button v-if="versionTitleDrafts[doc.id]" :disabled="libraryBusy" @click="uploadVersion(doc.id)">上传为新版本</button>
+                <button v-if="doc.current_version?.status === 'failed'" :disabled="libraryBusy" @click="retryVersion(doc.current_version.id)">重试处理</button>
+              </div>
+              <details v-if="doc.versions.length > 1">
+                <summary>历史版本（{{ doc.versions.length }}）</summary>
+                <p v-for="version in doc.versions" :key="version.id" class="mode-note">
+                  v{{ version.version_number }} · {{ version.original_file_name }} · {{ version.status }} · {{ version.published_at ? new Date(version.published_at).toLocaleDateString('zh-CN') : '未发布' }}
+                </p>
+              </details>
+            </div>
+            <p v-if="!libraryDocuments.length" class="empty-state">这个知识库还没有文档。</p>
+            <div class="kb-search">
+              <h3>检索测试</h3>
+              <div class="kb-create">
+                <input v-model="searchQuery" placeholder="输入一个问题，例如：试用期可以请年假吗" @keydown.enter="doSearch" />
+                <button :disabled="searchBusy || !searchQuery.trim() || knowledgeStatus?.status === 'unavailable'" @click="doSearch">{{ searchBusy ? '检索中…' : '检索' }}</button>
+              </div>
+              <div v-for="hit in searchHits" :key="hit.chunk_id" class="surface kb-doc-card search-hit">
+                <p><strong>{{ hit.document_title }} v{{ hit.version_number }}</strong><small> · {{ hit.section_path || '全文' }}{{ hit.page_start ? ` · 第${hit.page_start}页` : '' }} · 相似度 {{ Math.round(hit.score * 100) }}%</small></p>
+                <p class="mode-note">{{ hit.content }}</p>
+              </div>
+              <p v-if="searchHits.length === 0 && searchQuery && !searchBusy" class="empty-state">没有检索到相关内容。</p>
+            </div>
+          </template>
+          <p v-else class="empty-state">请选择或创建一个知识库。</p>
+        </div>
+      </div>
+    </section>
+    </template>
+
+    <template v-if="activeView === 'interaction'">
     <section v-if="snapshot?.status === 'ended'" class="surface session-ended-notice">
       <div><p class="eyebrow">课堂已结束</p><strong>本堂课的数据已保存</strong><small>学生端已经停止接收提问、反馈和检测作答。直播画面仍由保利威播放，请回到开播页面点击“结束直播”。</small></div>
     </section>
@@ -548,6 +945,9 @@ onBeforeUnmount(() => {
         </div>
         <section v-if="selected.feedback_round > 0" class="check-teacher-panel">
           <div class="card-row"><h3>理解检测</h3><span v-if="selectedCheck">{{ selectedCheck.status === 'draft' ? '待审核' : selectedCheck.status === 'active' ? '答题中' : '已关闭' }}</span></div>
+          <p v-if="selectedCheck" class="mode-note">
+            {{ selectedCheck.knowledge_backed ? '✓ 本题基于课堂知识资料生成，依据见解析。' : '⚠ 本题仅基于学生问题生成，知识库中没有该主题的资料依据，请人工核对或先补充资料。' }}
+          </p>
           <template v-if="selectedCheck">
             <p class="check-stem">{{ selectedCheck.stem }}</p>
             <ol class="check-review-options"><li v-for="option in selectedCheck.options" :key="option.key" :class="{ correct: option.key === selectedCheck.correct_option_key }">{{ option.key }}. {{ option.content }}</li></ol>
@@ -572,11 +972,41 @@ onBeforeUnmount(() => {
       <div class="pending-heading"><div><p class="eyebrow">需要处理</p><h2>暂未完成分析的问题</h2></div><button @click="retryAll">重新分析全部</button></div>
       <div v-for="item in snapshot.pending_questions" :key="item.id" class="pending-row"><span>{{ item.content }}</span><button @click="retry(item.id)">重新处理</button></div>
     </section>
+
+    <section v-if="ragAnswers.length" class="surface rag-panel">
+      <div class="pending-heading"><div><p class="eyebrow">AI 资料建议</p><h2>基于课堂知识库生成的答案</h2></div><span>{{ ragAnswers.length }} 条</span></div>
+      <p class="mode-note">答案只引用本课堂绑定的资料，并标注文档版本和页码。发布前请核对内容。</p>
+      <article v-for="answer in ragAnswers" :key="answer.id" class="rag-answer-card" :class="{ failed: answer.answer_status === 'failed' }">
+        <div class="card-row">
+          <span class="status" :class="answer.answer_status === 'published' ? 'closed' : 'open'">{{ ragStatusLabel[answer.answer_status] || answer.answer_status }}</span>
+          <small v-if="answer.confidence !== null">置信度 {{ Math.round((answer.confidence || 0) * 100) }}% · {{ answer.model }}</small>
+        </div>
+        <p class="rag-question">学生提问：{{ answer.question_content || '（未知问题）' }}</p>
+        <p v-if="answer.error_code" class="warn-text">生成失败：{{ answer.error_code }}。可重新生成或直接讲解。</p>
+        <p v-else-if="answer.insufficient_evidence" class="warn-text">{{ answer.answer }}</p>
+        <blockquote v-else-if="answer.answer">{{ answer.answer }}</blockquote>
+        <ul v-if="answer.citations.length" class="rag-citations">
+          <li v-for="(citation, index) in answer.citations" :key="citation.chunk_id">
+            <span>{{ index + 1 }}. {{ citation.location }}</span>
+            <small>{{ citation.content.slice(0, 80) }}{{ citation.content.length > 80 ? '…' : '' }}</small>
+          </li>
+        </ul>
+        <div v-if="snapshot.status !== 'ended'" class="rag-actions">
+          <button v-if="answer.answer_status === 'draft' && !answer.insufficient_evidence && answer.answer" :disabled="ragBusyId === answer.id" @click="ragAction(answer, 'approve')">通过审核</button>
+          <button v-if="answer.answer_status === 'draft' && !answer.insufficient_evidence && answer.answer" class="primary-action" :disabled="ragBusyId === answer.id" @click="ragAction(answer, 'publish')">直接发布给学生</button>
+          <button v-if="answer.answer_status === 'approved'" class="primary-action" :disabled="ragBusyId === answer.id" @click="ragAction(answer, 'publish')">发布给学生</button>
+          <button v-if="answer.answer_status === 'draft'" class="button-link" :disabled="ragBusyId === answer.id" @click="ragAction(answer, 'reject')">驳回</button>
+          <button class="button-link" :disabled="ragBusyId === answer.id" @click="regenerateAnswer(answer)">重新检索生成</button>
+        </div>
+      </article>
+    </section>
+
     <details v-if="snapshot.status !== 'ended'" class="diagnostic-panel">
       <summary>接入诊断</summary>
       <p>仅在接入配置或现场验收时使用。</p>
       <div class="reliability-actions"><button @click="verifyContract">检查数据接入</button><button v-if="snapshot.integration_status !== 'degraded'" @click="drill('degrade')">测试断线保护</button><button v-else @click="drill('recover')">恢复连接状态</button></div>
     </details>
+    </template>
     </template>
   </main>
 </template>

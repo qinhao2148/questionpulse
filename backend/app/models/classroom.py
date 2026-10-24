@@ -189,6 +189,9 @@ class CheckQuestion(Base):
     correct_option_key: Mapped[str] = mapped_column(String(1))
     explanation: Mapped[str] = mapped_column(String(1000))
     source: Mapped[str] = mapped_column(String(40), default="deepseek")
+    # True when the quiz was generated over retrieved classroom knowledge
+    # contexts; False means student questions only (knowledge gap signal).
+    knowledge_backed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

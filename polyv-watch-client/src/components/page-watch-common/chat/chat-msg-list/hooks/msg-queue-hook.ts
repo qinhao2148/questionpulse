@@ -12,6 +12,7 @@ import {
   plvInterval,
 } from '@polyv/live-watch-sdk';
 import { onBeforeUnmount, onMounted } from 'vue';
+import { useQueryParams } from '@/hooks/core/use-query-params';
 import { useContractHistory, useContractQueue } from './contract-history-hook';
 import { useFilterRepeatMsgHook, useFilterSpecialMsgHook } from './filter-chat-msg-hook';
 import { ChatMsgListHookOptions } from './types';
@@ -29,6 +30,18 @@ export const useChatMsgQueue = (hookOptions: ChatMsgListHookOptions) => {
   const { contractMsgQueue } = useContractQueue();
   const { isNotSpecialMsg } = useFilterSpecialMsgHook();
   const { filterRepeatMsg } = useFilterRepeatMsgHook(hookOptions);
+  const { paramGetter } = useQueryParams();
+
+  /**
+   * QuestionPulse：所有课堂共用一个 POLYV 频道，聊天历史挂在频道上。
+   * 加入课堂时 URL 带了本课堂的创建时间（qpSessionStart），在此之前的
+   * 消息都属于上一堂课，直接不渲染，避免下一堂课看到旧提问。
+   */
+  function isFromPreviousClassroom(chatMsg: ChatMsgType): boolean {
+    const sessionStart = Number(paramGetter().qpSessionStart());
+    if (!sessionStart || !chatMsg.time) return false;
+    return chatMsg.time < sessionStart;
+  }
 
   function __checkInBottom() {
     const container = hookOptions.getContainerElem();
@@ -173,6 +186,11 @@ export const useChatMsgQueue = (hookOptions: ChatMsgListHookOptions) => {
 
     // 对于仅看主持人，非特殊身份，非自己发言的全部过滤掉
     if (chatStore.onlySpecialMsg && isNotSpecialMsg(chatMsg)) {
+      return;
+    }
+
+    // QuestionPulse：隐藏上一个课堂的聊天历史
+    if (isFromPreviousClassroom(chatMsg)) {
       return;
     }
 

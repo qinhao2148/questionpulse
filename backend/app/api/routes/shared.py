@@ -596,6 +596,105 @@ async def build_snapshot(
             )
         )
     cluster_views.sort(key=lambda item: (-item.participant_count, -item.question_count))
+
+    rag_answer_views: list = []
+    published_answer_views: list = []
+    if include_teacher_insights:
+        from app.knowledge.views import citation_views
+        from app.models.knowledge import RagAnswer, RagCitation
+
+        answer_rows = (
+            await db.execute(
+                select(RagAnswer, Question)
+                .join(Question, Question.id == RagAnswer.question_id)
+                .where(
+                    RagAnswer.session_id == session_id,
+                    RagAnswer.answer_status.in_(["draft", "approved", "published", "failed"]),
+                )
+                .order_by(RagAnswer.created_at.desc())
+                .limit(50)
+            )
+        ).all()
+        if answer_rows:
+            citation_rows = list(
+                await db.scalars(
+                    select(RagCitation)
+                    .where(RagCitation.rag_answer_id.in_([row[0].id for row in answer_rows]))
+                    .order_by(RagCitation.citation_order)
+                )
+            )
+            citations_by_answer: dict = {}
+            for citation in citation_rows:
+                citations_by_answer.setdefault(citation.rag_answer_id, []).append(citation)
+            from app.schemas.knowledge import RagAnswerView
+
+            for answer, question in reversed(answer_rows):
+                rag_answer_views.append(
+                    RagAnswerView(
+                        id=answer.id,
+                        question_id=answer.question_id,
+                        cluster_id=answer.cluster_id,
+                        question_content=question.content if question else None,
+                        answer=answer.answer,
+                        confidence=answer.confidence,
+                        insufficient_evidence=answer.insufficient_evidence,
+                        answer_status=answer.answer_status,
+                        model=answer.model,
+                        error_code=answer.error_code,
+                        citations=await citation_views(
+                            db, citations_by_answer.get(answer.id, [])
+                        ),
+                        created_at=answer.created_at,
+                    )
+                )
+    elif participant_id is not None:
+        from app.knowledge.views import citation_views
+        from app.models.knowledge import RagAnswer, RagCitation
+
+        # Published answers are classroom-wide: questions promoted from the
+        # POLYV chat belong to shadow participants no student client logs in
+        # as, so filtering by asker would make those answers unreachable for
+        # everyone. The teacher's publish action is the explicit consent to
+        # show the answer to the whole class.
+        published_rows = (
+            await db.execute(
+                select(RagAnswer, Question)
+                .join(Question, Question.id == RagAnswer.question_id)
+                .where(
+                    RagAnswer.session_id == session_id,
+                    RagAnswer.answer_status == "published",
+                )
+                .order_by(RagAnswer.published_at.desc())
+                .limit(30)
+            )
+        ).all()
+        if published_rows:
+            citation_rows = list(
+                await db.scalars(
+                    select(RagCitation)
+                    .where(RagCitation.rag_answer_id.in_([row[0].id for row in published_rows]))
+                    .order_by(RagCitation.citation_order)
+                )
+            )
+            citations_by_answer: dict = {}
+            for citation in citation_rows:
+                citations_by_answer.setdefault(citation.rag_answer_id, []).append(citation)
+            from app.schemas.classroom import StudentPublishedAnswer
+
+            for answer, question in published_rows:
+                published_answer_views.append(
+                    StudentPublishedAnswer(
+                        answer_id=answer.id,
+                        question_id=answer.question_id,
+                        question_content=question.content if question else None,
+                        answer=answer.answer,
+                        citations=await citation_views(
+                            db, citations_by_answer.get(answer.id, [])
+                        ),
+                        published_at=answer.published_at,
+                    )
+                )
+
     return Snapshot(
         id=classroom.id,
         title=classroom.title,
@@ -615,6 +714,8 @@ async def build_snapshot(
             if not question.cluster_id
             and (participant_id is None or question.participant_id == participant_id)
         ],
+        rag_answers=rag_answer_views,
+        published_answers=published_answer_views,
     )
 
 
@@ -702,6 +803,7 @@ async def check_question_view(
         stem=check.stem,
         options=[CheckOptionView(key=item.option_key, content=item.content) for item in options],
         source=check.source,
+        knowledge_backed=check.knowledge_backed,
         explanation=check.explanation if revealed else None,
         correct_option_key=check.correct_option_key if revealed else None,
         target_count=target_count or 0,
